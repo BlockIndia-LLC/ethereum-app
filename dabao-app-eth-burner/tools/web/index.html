@@ -46,6 +46,10 @@
   #touch small { display: block; font-weight: 400; font-size: 15px; color: var(--muted); }
   #meter { height: 14px; border-radius: 7px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; margin-top: 10px; }
   #meter > div { height: 100%; width: 0; background: var(--accent); transition: width .15s; }
+  table.check { border-collapse: collapse; width: 100%; margin-top: 8px; white-space: normal; }
+  table.check td { padding: 5px 8px 5px 0; vertical-align: top; border-top: 1px solid var(--line); }
+  table.check td:first-child { width: 26px; font-weight: 700; }
+  .verdict { font-size: 18px; font-weight: 700; }
   #log { font-family: var(--mono); font-size: 13px; color: var(--muted); max-height: 180px; overflow: auto; white-space: pre-wrap; margin: 0; }
 </style>
 </head>
@@ -67,8 +71,19 @@
     </dl>
   </section>
 
+  <section id="s-check">
+    <h2>2. Check the bootloader</h2>
+    <p class="note">The first code the chip runs is its bootloader. This reads the fingerprints (SHA-512) the bootloader reports for its two stages and compares them with builds that were rebuilt from the public source. The check runs in the bootloader, not in the signer, so the board has to be restarted into it.</p>
+    <p id="serial-support" class="bad" hidden>This browser has no Web Serial. Use Chrome or Edge on a computer.</p>
+    <button id="b-to-boot" class="quiet" disabled>Restart into the bootloader</button>
+    <button id="b-check">Read and check</button>
+    <button id="b-to-signer" class="quiet" disabled>Start the signer again</button>
+    <p class="note" style="margin-top:10px">No signer connected? Put the board in its bootloader by hand: hold PROG, tap RESET, release PROG. Then click "Read and check" and pick the board's serial port.</p>
+    <div class="out" id="c-out"></div>
+  </section>
+
   <section id="s-message" disabled>
-    <h2>2. Sign a message</h2>
+    <h2>3. Sign a message</h2>
     <label for="m-text">Message</label>
     <input type="text" id="m-text" value="Hello from a Dabao">
     <button id="b-sign-msg">Sign on the board</button>
@@ -76,7 +91,7 @@
   </section>
 
   <section id="s-tx" disabled>
-    <h2>3. Send a test transaction</h2>
+    <h2>4. Send a test transaction</h2>
     <p class="warn"><b>Sepolia test network only.</b> This page shows what it asks the board to sign, but the board has no screen and cannot show it. A compromised computer could ask for something else. Never use this key for real funds.</p>
     <label for="t-to">To</label>
     <input type="text" id="t-to" class="mono" placeholder="0x…">
@@ -237,6 +252,112 @@ class Board {
   }
 }
 
+// ---------------------------------------------------------------- bootloader check
+// Boot stages that were rebuilt from the public source and compared with the official signed release.
+// "code" is the SHA-512 of the stage without its signature block, "partition" that of the whole partition.
+const VERIFICATION_RECORD = "https://github.com/BlockIndia-LLC/ethereum-app/blob/touch-confirm/dabao-app-eth-burner/docs/VERIFICATION.md";
+export const KNOWN_BUILDS = [{
+  version: "v0.10.0-61-g5397e1b48",
+  baobit: "441559d7e1984623ec0a52f60f90240c740b6c41",
+  boot0: {
+    code: "563802e7f10fd0ca0a1c700c6313eff624aa57d9cd88d3c33af4b720eff5480432e01c116925a324a96e12d92953d7cb6076ea4557a22058e1a61be4c2b4dee2",
+    partition: "a0680a73106600c4ece34f9393fc5c8eed4885e844b1b78b58fb3a8a299a885cd794c667a5e787083bce46bf7aff8d3f4affa6a93a38ba7b507bb0d47c70fa01",
+  },
+  boot1: {
+    code: "e42b5aba61d98990ca24f5fc3b6cf012b14ea4d121f9bbe494baf4d9ae854d3ba88cdf26a288b88778826f816dc960c3ffe24b7c919108a3aca90f2dc4551a55",
+    partition: "a12eb17f37c88e834bb7beef3f5163f232824e8044fcbab3bb37c6ac54d10f78d61ace96da9ebfc03e3cc9514312f22b18a9481747fc0526dc89733789db3927",
+  },
+  evidence: "rebuilt from source with baobit (GNU Guix) on 2026-11-17; equal to the official signed release v0.10.0",
+}];
+
+// The text printed by the bootloader's `audit` command, as fields.
+export function parseAudit(text) {
+  const line = re => (text.match(re) ?? [])[1]?.trim();
+  const stage = n => ({
+    code: line(new RegExp(`boot${n} code only:\\s*([0-9a-f]{128})`, "i")),
+    partition: line(new RegExp(`boot${n} partition:\\s*([0-9a-f]{128})`, "i")),
+    baobit: line(new RegExp(`boot${n} baobit toolchain:\\s*([0-9a-f]{40})`, "i")),
+    key: line(new RegExp(`Boot${n}: key \\S+ \\(([^)]*)\\)`)),
+  });
+  const attacks = line(/Possible attack attempts:\s*(\d+)/);
+  return {
+    board: line(/Board type reads as:\s*(.+)/),
+    version: line(/Semver is:\s*(\S+)/),
+    stepping: line(/Stepping is:\s*(\S+)/),
+    boot0: stage(0), boot1: stage(1),
+    nextKey: line(/Next stage: key \S+ \(([^)]*)\)/),
+    attacks: attacks === undefined ? undefined : Number(attacks),
+    debugOff: /CM7 & debug confirmed fused off/.test(text),
+    receiptsOk: /Boot1 receipts OK/.test(text),
+    rollbackOk: /Boot1 anti-rollback OK/.test(text),
+  };
+}
+
+// Compare an audit with the known builds. status: "ok", "bad" or "info".
+export function checkAudit(a) {
+  const rows = [];
+  const add = (status, what, detail) => rows.push({ status, what, detail });
+  const short = h => h ? `${h.slice(0, 16)}…${h.slice(-16)}` : "not reported";
+  if (!a.boot0.code || !a.boot1.code) {
+    return { verdict: "unreadable", rows: [{ status: "bad", what: "Audit output", detail: "The fingerprints could not be read from the bootloader's answer." }] };
+  }
+  const build = KNOWN_BUILDS.find(b => b.boot0.code === a.boot0.code || b.boot1.code === a.boot1.code || b.version === a.version);
+  if (!build) {
+    add("info", "Version", `${a.version ?? "unknown"} is not in this page's list of rebuilt versions.`);
+    add("info", "boot0 code", short(a.boot0.code));
+    add("info", "boot1 code", short(a.boot1.code));
+    return { verdict: "unknown", rows };
+  }
+  let allMatch = true;
+  for (const n of ["boot0", "boot1"]) {
+    for (const part of ["code", "partition"]) {
+      const good = a[n][part] === build[n][part];
+      allMatch &&= good;
+      add(good ? "ok" : "bad", `${n} ${part === "code" ? "code" : "whole partition"}`,
+        good ? `${short(a[n][part])} equals the rebuilt image` : `${short(a[n][part])} differs from the rebuilt image ${short(build[n][part])}`);
+    }
+    if (a[n].baobit) add(a[n].baobit === build.baobit ? "ok" : "info", `${n} build recipe`, `baobit ${a[n].baobit.slice(0, 8)}`);
+    if (a[n].key) add(a[n].key.trim() === "bao1" ? "ok" : "info", `${n} signed with`, `the "${a[n].key.trim()}" key`);
+  }
+  if (a.attacks !== undefined) add(a.attacks === 0 ? "ok" : "bad", "Attack attempts counted", String(a.attacks));
+  add(a.debugOff ? "ok" : "info", "Debug access", a.debugOff ? "confirmed fused off" : "not confirmed off");
+  if (a.nextKey) add("info", "Next stage (Xous) signed with", `the "${a.nextKey.trim()}" key${a.nextKey.trim() === "dev" ? ": a developer image, as this signer is" : ""}`);
+  if (a.stepping) add("info", "Silicon", `stepping ${a.stepping}${a.stepping === "A0" ? " (pre-production)" : ""}`);
+  return { verdict: allMatch ? "match" : "mismatch", build, rows };
+}
+
+// The bootloader's console, over Web Serial.
+// A port the user already allowed is reused; otherwise the browser asks which one.
+async function withBootloader(fn) {
+  const allowed = (await navigator.serial.getPorts()).find(p => p.getInfo().usbVendorId === VID);
+  const port = allowed ?? await navigator.serial.requestPort({ filters: [{ usbVendorId: VID }] });
+  await port.open({ baudRate: 115200 });
+  try {
+    await port.setSignals({ dataTerminalReady: true, requestToSend: true });
+    const writer = port.writable.getWriter(), reader = port.readable.getReader();
+    const decoder = new TextDecoder();
+    let pending = null;                       // one read at a time: a read that lost a race is kept
+    // Send a command; collect the answer until `until` shows up or the line goes quiet.
+    const command = async (cmd, until, maxMs = 8000) => {
+      await writer.write(new TextEncoder().encode(cmd + "\r"));
+      let text = "", quiet = 0;
+      const end = Date.now() + maxMs;
+      while (Date.now() < end) {
+        pending ??= reader.read();
+        const chunk = await Promise.race([pending, new Promise(r => setTimeout(() => r(null), 400))]);
+        if (chunk === null) { if (text && ++quiet >= 4) break; continue; }
+        pending = null;
+        if (chunk.done) break;
+        quiet = 0; text += decoder.decode(chunk.value, { stream: true });
+        if (until && until.test(text)) break;
+      }
+      return text;
+    };
+    try { return await fn(command); }
+    finally { await reader.cancel().catch(() => {}); reader.releaseLock(); writer.releaseLock(); }
+  } finally { await port.close().catch(() => {}); }
+}
+
 // ---------------------------------------------------------------- page
 const $ = id => document.getElementById(id);
 const log = s => { $("log").textContent += `[${new Date().toLocaleTimeString()}] ${s}\n`; $("log").scrollTop = 1e9; };
@@ -249,6 +370,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;",
 function enable(on) {
   for (const id of ["s-message", "s-tx", "s-meter"]) on ? $(id).removeAttribute("disabled") : $(id).setAttribute("disabled", "");
   $("info").hidden = !on;
+  $("b-to-boot").disabled = !on;
 }
 
 async function withTouch(fn) {
@@ -266,7 +388,17 @@ async function refreshBalance() {
 
 async function connect() {
   const [device] = await navigator.hid.requestDevice({ filters: [{ vendorId: VID, productId: PID, usagePage: USAGE_PAGE }] });
-  if (!device) return;
+  if (device) await attach(device);
+}
+
+// After the signer restarts, a board the user already allowed is picked up again without a dialog.
+async function reattach() {
+  if (board) return;
+  const device = (await navigator.hid.getDevices()).find(d => d.vendorId === VID && d.productId === PID);
+  if (device) await attach(device);
+}
+
+async function attach(device) {
   if (!device.opened) await device.open();
   board = new Board(device);
   log(`connected to "${device.productName}"`);
@@ -280,6 +412,48 @@ async function connect() {
   enable(true);
   log(`signer ${version}, address ${address}`);
   refreshBalance();
+}
+
+async function toBootloader() {
+  setOut("c-out", "Asking the signer to restart…");
+  await board.ask(customRequest(4), 4000);
+  log("the signer is restarting into the bootloader");
+  setOut("c-out", "The board is restarting into its bootloader. Give it a few seconds, then click \"Read and check\".");
+}
+
+async function checkBoard() {
+  setOut("c-out", "Reading the bootloader's audit…");
+  let text;
+  try {
+    text = await withBootloader(command => command("audit", /anti-rollback/i));
+  } catch (e) {
+    setOut("c-out", `<span class="bad">Could not read the bootloader.</span> ${esc(e.message)}\nIs the board in its bootloader (a drive named BAOCHIP shows up)?`);
+    log(`check failed: ${e.message}`);
+    return;
+  }
+  const audit = parseAudit(text), result = checkAudit(audit);
+  const mark = { ok: ["✓", "ok"], bad: ["✗", "bad"], info: ["·", "note"] };
+  const verdicts = {
+    match: `<span class="verdict ok">The bootloader matches the published source.</span>\nBoth stages equal build ${esc(result.build?.version)}, ${esc(result.build?.evidence)}.`,
+    mismatch: `<span class="verdict bad">The bootloader does NOT match the rebuilt images.</span>\nDon't trust this board with a key until you know why.`,
+    unknown: `<span class="verdict">This bootloader version isn't in this page's list.</span>\nThat is not a failure: nobody has recorded a rebuild of it here yet. The verification record explains how to rebuild and compare.`,
+    unreadable: `<span class="verdict bad">The answer could not be understood.</span>`,
+  };
+  setOut("c-out", `${verdicts[result.verdict]}\n` +
+    `<table class="check">${result.rows.map(r => `<tr><td class="${mark[r.status][1]}">${mark[r.status][0]}</td><td>${esc(r.what)}</td><td class="mono">${esc(r.detail)}</td></tr>`).join("")}</table>` +
+    `<span class="note">What this can't show: the fingerprints are reported by the chip itself, so a dishonest factory step would not be caught. ` +
+    `<a href="${VERIFICATION_RECORD}" target="_blank" rel="noopener">How the rebuild was done, and its limits</a>.</span>`);
+  log(`bootloader check: ${result.verdict}${audit.version ? " (" + audit.version + ")" : ""}`);
+  $("b-to-signer").disabled = false;
+}
+
+async function toSigner() {
+  setOut("c-out", $("c-out").innerHTML + "\nStarting the signer…");
+  try { await withBootloader(command => command("boot", null, 1500)); } catch (e) { log(`start signer: ${e.message}`); }
+  $("b-to-signer").disabled = true;
+  log("asked the bootloader to start the signer");
+  for (let i = 0; i < 20 && !board; i++) { await new Promise(r => setTimeout(r, 1000)); await reattach().catch(() => {}); }
+  log(board ? "the signer is back" : "the signer did not come back by itself: click Connect");
 }
 
 async function signMessage() {
@@ -369,13 +543,21 @@ if (!("hid" in navigator)) {
   $("b-sign-tx").onclick = guard(signTx);
   $("b-broadcast").onclick = guard(broadcast);
   $("b-meter").onclick = guard(meter);
+  $("b-to-boot").onclick = guard(toBootloader);
+  navigator.hid.addEventListener("connect", () => reattach().catch(() => {}));
+  if ("serial" in navigator) {
+    $("b-check").onclick = guard(checkBoard);
+    $("b-to-signer").onclick = guard(toSigner);
+  } else {
+    $("serial-support").hidden = false; $("b-check").disabled = true;
+  }
   navigator.hid.addEventListener("disconnect", e => {
     if (board && e.device === board.device) { board = null; metering = false; enable(false); log("the board was disconnected"); }
   });
 }
 
 // For tests in the console: the encoders are pure functions.
-window.dabao = { cborEncode, cborDecode, customRequest, signRequest, Tag, hexlify };
+window.dabao = { cborEncode, cborDecode, customRequest, signRequest, Tag, hexlify, parseAudit, checkAudit, KNOWN_BUILDS };
 </script>
 </body>
 </html>

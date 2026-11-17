@@ -167,6 +167,11 @@ computer. Nothing is installed.
 * **Sign a message** and **Send a test transaction** ask the board, show a "touch the pad" banner with a
   countdown, then recover the signer from the reply and compare it with the board's address. A transaction
   is only sent to the network by a separate Broadcast button.
+* **Check the bootloader** restarts the board into its bootloader (`reboot`), reads the `audit` output over
+  Web Serial and compares the two boot stages' SHA-512 with builds that were rebuilt from source
+  ([docs/VERIFICATION.md](docs/VERIFICATION.md)), then starts the signer again. The list of known builds is
+  in the page (`KNOWN_BUILDS`) and has one entry so far, `v0.10.0-61-g5397e1b48`; any other version is
+  reported as not in the list. Someone using the page trusts that list, and the chip's own report.
 * A live meter of the touch sensor (`probe-confirm`).
 
 Browsers give WebHID only to pages served over https or from `localhost`, not to a file opened from disk:
