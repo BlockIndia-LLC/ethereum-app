@@ -121,8 +121,8 @@ Codespace, 4 cores; nothing is installed on the PC the board is plugged into). R
 
 ```sh
 # 1. the two repositories, side by side
-git clone --branch devcon8-workshop https://github.com/thatzprem/xous-core.git     # commit d1d4b9b
-git clone --branch touch-confirm    https://github.com/thatzprem/ethereum-app.git
+git clone --branch devcon8-workshop https://github.com/BlockIndia-LLC/xous-core.git     # commit d1d4b9b
+git clone --branch touch-confirm    https://github.com/BlockIndia-LLC/ethereum-app.git
 
 # 2. Rust, and the version tags the Xous build checks for
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
