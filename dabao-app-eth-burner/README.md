@@ -278,7 +278,8 @@ The checks to run on a real board are in xous-core's
   another address is refused at once (159 ms).
 * 0.5.0: `status` on a stock image and on a `keystore/single-client` image, as in "The keystore, sealed".
   On the sealed image: get-address (same address, so the approver reads the seed), `probe-confirm`, and
-  sign-message refused after 15 s without a touch.
+  sign-message refused after 15 s without a touch and signed after one (from the browser page, which
+  also showed the two `status` lines).
 
 Not run on a board yet: sign-typed-data, a second board.
 
