@@ -179,7 +179,11 @@ VID 0x1d50 / PID 0x6197. `ETH_BURNER_PORT` changes the emulator's TCP port (defa
 ## Reproduce it from scratch
 
 These are the steps the firmware on the test board was built with, on a clean Linux machine (a GitHub
-Codespace, 4 cores; nothing is installed on the PC the board is plugged into). Rust was 1.99.1.
+Codespace, 4 cores; nothing is installed on the PC the board is plugged into).
+
+Rust is pinned to 1.99.1. With 1.100.0 the last step fails with `Error: Os { code: 2, kind: NotFound }`:
+Cargo changed where build scripts write their output, and this xous-core's `xtask` no longer finds the
+`SVD_PATH` file that `utralib` leaves there.
 
 ```sh
 # 1. the two repositories, side by side
@@ -187,7 +191,8 @@ git clone --branch dabao-keystore-single-client https://github.com/BlockIndia-LL
 git clone --branch touch-confirm    https://github.com/BlockIndia-LLC/ethereum-app.git
 
 # 2. Rust, and the version tags the Xous build checks for
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+#    (1.99.1, not the latest: see the note below)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
 . "$HOME/.cargo/env"
 cd xous-core
 git remote add upstream https://github.com/betrusted-io/xous-core.git
@@ -218,10 +223,18 @@ To load them, put the board in its bootloader (hold `PROG`, tap `RESET`, release
 USB drive named `BAOCHIP`. Copy the three files onto it, then press `PROG` to start. With 0.3.0 or later
 already running, the `reboot` command replaces the buttons.
 
-Built this way, `loader.uf2` came out identical from one build to the next and `xous.uf2` did not, most
-likely because of the build timestamp. xous-core's `--no-timestamp` flag and the
-[baobit](https://github.com/sbellem/baobit) toolchain are the way to byte-for-byte reproducible images;
-neither has been tried here.
+These steps were replayed as written, on 2026-11-17, on a new Codespace with no Rust on it: they ran to
+the end in under seven minutes, and the three files they produced were flashed to the test board, where
+the signer answered as 0.5.0 with the same address and a sealed keystore. (The first replay is what found
+the Rust version problem above.)
+
+The replay does **not** give the same bytes. Rebuilding in the same directory on the same machine left
+`loader.uf2` unchanged and changed `xous.uf2`, most likely through the build timestamp; the replay, in
+another directory on another machine, gave different files for all three, probably because source paths
+end up in the binaries. So this shows the steps work, not that the firmware on a board can be matched to
+the source. For these images, xous-core's `--no-timestamp` flag and a [baobit](https://github.com/sbellem/baobit)
+(Guix) build are the way to that, and have not been tried; the boot stages below them were matched, see
+[docs/VERIFICATION.md](docs/VERIFICATION.md).
 
 ### Browser page
 
