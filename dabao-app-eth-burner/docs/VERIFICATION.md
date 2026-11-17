@@ -4,6 +4,8 @@ The dabao this signer was developed on reports, through its bootloader's `audit`
 the two boot stages it holds. This is a record of rebuilding both stages from the public source and
 comparing, following [baobit's VERIFY.md](https://github.com/sbellem/baobit/blob/main/VERIFY.md).
 
+![Three sources, one fingerprint: the chip's own report, the signed release and a rebuild from source give the same SHA-512 for boot0 and boot1](04-three-sources.png)
+
 **Result: all three sources agree, for both stages.**
 
 | | boot0, code only (SHA-512) | boot1, code only (SHA-512) |
