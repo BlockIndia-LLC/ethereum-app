@@ -158,6 +158,25 @@ likely because of the build timestamp. xous-core's `--no-timestamp` flag and the
 [baobit](https://github.com/sbellem/baobit) toolchain are the way to byte-for-byte reproducible images;
 neither has been tried here.
 
+### Browser page
+
+`tools/web/index.html` is a one-file wallet page that talks to the board over WebHID, in Chrome or Edge on a
+computer. Nothing is installed.
+
+* **Connect** shows the signer's version, the board's address and its Sepolia balance.
+* **Sign a message** and **Send a test transaction** ask the board, show a "touch the pad" banner with a
+  countdown, then recover the signer from the reply and compare it with the board's address. A transaction
+  is only sent to the network by a separate Broadcast button.
+* A live meter of the touch sensor (`probe-confirm`).
+
+Browsers give WebHID only to pages served over https or from `localhost`, not to a file opened from disk:
+`pwsh -File tools/web/serve.ps1` serves the folder at `http://localhost:8765/` (this computer only), and
+`python3 -m http.server 8765` in that folder does the same.
+
+The page is fixed to the Sepolia test network. It shows what it asks the board to sign, but the board has
+no screen: a compromised computer could ask for something else. It loads `ethers` 6.13.4 from a public CDN
+for the Ethereum encoding and the signature checks.
+
 ### Windows host tools
 
 `tools/windows` holds PowerShell scripts that talk to the board with Windows' own HID support: no Python,
@@ -197,5 +216,6 @@ Not run on a board yet: sign-typed-data, the wrong-address refusal, a second boa
 | `src/transport.rs` | HID (device) and TCP (emulator) transports; answers get-version |
 | `protocol.cddl` | protocol definition |
 | `tools/eth_client.py`, `tools/ethlib.py` | host client and its Ethereum helpers |
+| `tools/web/` | browser wallet page (WebHID) and a local server for it |
 | `tools/windows/*.ps1` | Windows host scripts: flash, sign, touch meter, raw requests |
 | `docs/` | illustrations for this README |
