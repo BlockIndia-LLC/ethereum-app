@@ -23,6 +23,7 @@ layer:
 * The chip's design source is published.
 * The package lets you image the silicon under infrared light and compare it with that design.
 * The bootloader can be rebuilt from source and matched, hash for hash, against what the chip reports.
+  This was done for the test board: [docs/VERIFICATION.md](docs/VERIFICATION.md).
 * The operating system, Xous, is open and written in Rust.
 
 It isn't entirely open: some third-party blocks inside the chip are closed, and they are documented as
