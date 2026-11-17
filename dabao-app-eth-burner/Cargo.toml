@@ -1,6 +1,6 @@
 [package]
 name = "dabao-eth-burner"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Ethereum burner signer for a bare dabao (Xous, no screen, USB HID)"
@@ -8,9 +8,19 @@ description = "Ethereum burner signer for a bare dabao (Xous, no screen, USB HID
 # Built on its own, then handed to xous-core's xtask as a binary.
 [workspace]
 
+[lib]
+name = "eth_burner"
+path = "src/lib.rs"
+
+# the front desk: talks to the host
 [[bin]]
 name = "eth-burner"
 path = "src/main.rs"
+
+# the approver: seed, touch pad and signing
+[[bin]]
+name = "eth-approver"
+path = "src/approver.rs"
 
 [dependencies]
 log = "0.4.14"

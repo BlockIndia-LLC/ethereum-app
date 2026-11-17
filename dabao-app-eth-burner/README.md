@@ -84,6 +84,44 @@ Two development commands (see `protocol.cddl`) help on a board without a serial 
 and tune the level, and `reboot` restarts the chip, which lands in the bootloader's mass storage mode so
 new firmware can be copied without pressing a button.
 
+## Two processes
+
+The signer is two Xous processes, built from this one crate:
+
+| | `eth-burner`, the front desk | `eth-approver` |
+|---|---|---|
+| Talks to the host (USB HID) | yes | no |
+| Parses the framing; answers get-version | yes | no |
+| Holds the seed, derives keys, signs | no | yes |
+| Reads the touch pad and decides "approved" | no | yes |
+
+The front desk hands each request to the approver through one message type (`src/ipc.rs`): a buffer
+holding the request as it came from the host, lent while the approver works on it and returned holding
+the answer. The approver registers its name with xous-names for a single connection, which the front desk
+takes, so no third process can get one.
+
+Xous gives each process its own address space, and on the bao1x the chip's MMU enforces it. The code that
+faces the host is the code most likely to have a memory-safety bug; in one process, such a bug could read
+the seed or jump past the touch check. Split this way it can only do what the front desk can do: ask the
+approver to handle a request, which for a signature still waits for a finger on the pad.
+
+What the split does **not** do, on a stock dabao image:
+
+* **The keystore is open to every process.** On the dabao it registers for unlimited connections (the
+  `baosec` configuration limits it to a known list), and the application key slots have no per-process
+  check. A front desk that was fully taken over could connect to the keystore and read slots 132..133,
+  the seed, without going through the approver. Closing this needs a change in xous-core: a connection
+  limit for the dabao's keystore that the approver's connection uses up. Not done here.
+* **The pin and BIO services are open too.** The same front desk could reconfigure pad `PB1` through
+  `bao1x-hal-service` and disturb what the touch sensor reads.
+* **It doesn't show what is signed.** The front desk passes on whatever the host sends; a touch approves
+  it unseen.
+* A bug in the approver itself is still fatal. It is the smaller part: it never parses the HID framing,
+  but it does decode the request it is asked to sign.
+
+So today the split protects the approver's memory, and it is the structure that the keystore limit and a
+display owned by the approver would complete.
+
 ## Build and run
 
 With xous-core (branch `dabao-burner`) checked out next to `ethereum-app`, and the Xous toolchain installed
@@ -92,9 +130,10 @@ With xous-core (branch `dabao-burner`) checked out next to `ethereum-app`, and t
 ```sh
 ./build.sh               # host and device binaries (or ./build.sh emu / ./build.sh device)
 
-# emulator: only the base services (ticktimer, log, names)
+# emulator: only the base services (ticktimer, log, names), then the two processes
 cd ../../xous-core
-cargo xtask dabao-emu ../ethereum-app/dabao-app-eth-burner/target/release/eth-burner
+cargo xtask dabao-emu ../ethereum-app/dabao-app-eth-burner/target/release/eth-approver \
+    ../ethereum-app/dabao-app-eth-burner/target/release/eth-burner
 # in another terminal, from this directory
 tools/eth_client.py get-version
 tools/eth_client.py get-address "m/44'/60'/0'/0/0"
@@ -103,8 +142,9 @@ tools/eth_client.py sign-tx --expect <the address logged at boot>
 tools/eth_client.py sign-typed-data mail --expect <address>    # EIP-712; also `group` or a JSON file
 tools/eth_client.py sign-message 'Hello' --expect <address>    # EIP-191; also siwe or 0xHEX
 
-# device image: the app path must come before the flags
-cargo xtask dabao ../ethereum-app/dabao-app-eth-burner/target/riscv32imac-unknown-xous-elf/release/eth-burner \
+# device image: the app paths must come before the flags
+cargo xtask dabao ../ethereum-app/dabao-app-eth-burner/target/riscv32imac-unknown-xous-elf/release/eth-approver \
+    ../ethereum-app/dabao-app-eth-burner/target/riscv32imac-unknown-xous-elf/release/eth-burner \
     --feature usb-bao1x/generic-hid
 tools/eth_client.py --hid get-address    # needs `pip install hidapi`
 ```
@@ -142,8 +182,8 @@ cargo test --release
 # 5. the board image: loader.uf2, xous.uf2 and apps.uf2 in
 #    xous-core/target/riscv32imac-unknown-xous-elf/release/
 cd ../../xous-core
-cargo xtask dabao ../ethereum-app/dabao-app-eth-burner/target/riscv32imac-unknown-xous-elf/release/eth-burner \
-    --feature usb-bao1x/generic-hid
+R=../ethereum-app/dabao-app-eth-burner/target/riscv32imac-unknown-xous-elf/release
+cargo xtask dabao $R/eth-approver $R/eth-burner --feature usb-bao1x/generic-hid
 ```
 
 The images are signed with the public developer key. A bao1x that boots one erases its factory secrets
@@ -208,14 +248,20 @@ The checks to run on a real board are in xous-core's
   `0xdd4a2bfe3d43b7757218c0c065b9a6da3c3ac6c1536d0fe2f421af15e7835b84`.
 * 0.3.0: sign-message is refused after 15 s without a touch and signed after a touch on `PB1`;
   `probe-confirm` and `reboot` work.
+* 0.4.0, as two processes: get-version (front desk) and get-address (approver, same address as before);
+  `probe-confirm` reads the pad; sign-message is refused after 15 s without a touch and signed after one; a request naming
+  another address is refused at once (159 ms).
 
-Not run on a board yet: sign-typed-data, the wrong-address refusal, a second board.
+Not run on a board yet: sign-typed-data, a second board.
 
 ## Layout
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | seed creation and storage (keystore slots or a host file), request handling and signing |
+| `src/main.rs` | `eth-burner`, the front desk: transport, and passing requests to the approver |
+| `src/approver.rs`, `src/signer.rs` | `eth-approver`: seed creation and storage (keystore slots or a host file), request handling and signing |
+| `src/ipc.rs` | the one message between the two processes |
+| `src/lib.rs` | the modules shared by the two binaries |
 | `src/confirm.rs` | approval of a signing request: touch pad (device) or a file (emulator) |
 | `src/protocol.rs` | framing, custom CBOR, HID chunking (unit tested) |
 | `src/transport.rs` | HID (device) and TCP (emulator) transports; answers get-version |

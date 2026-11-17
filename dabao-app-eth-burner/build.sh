@@ -14,9 +14,9 @@ case "$what" in
 esac
 if [ "$what" = emu ] || [ "$what" = all ]; then
     cargo build --release
-    echo "emulator binary: $(pwd)/target/release/eth-burner"
+    echo "emulator binaries: $(pwd)/target/release/eth-approver and eth-burner"
 fi
 if [ "$what" = device ] || [ "$what" = all ]; then
     cargo build --release --target riscv32imac-unknown-xous-elf --features board-dabao,bao1x
-    echo "device binary: $(pwd)/target/riscv32imac-unknown-xous-elf/release/eth-burner"
+    echo "device binaries: $(pwd)/target/riscv32imac-unknown-xous-elf/release/eth-approver and eth-burner"
 fi
