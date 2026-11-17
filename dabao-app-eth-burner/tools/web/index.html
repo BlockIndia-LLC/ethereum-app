@@ -66,6 +66,7 @@
     <dl id="info" hidden style="margin-top:14px">
       <dt>Signer version</dt><dd id="i-version">–</dd>
       <dt>Address</dt><dd><span id="i-address" class="mono">–</span></dd>
+      <dt>Key store</dt><dd id="i-keystore" style="white-space:pre-line">–</dd>
       <dt>Sepolia balance</dt><dd id="i-balance">–</dd>
       <dt>Explorer</dt><dd id="i-explorer">–</dd>
     </dl>
@@ -408,6 +409,9 @@ async function attach(device) {
   $("i-version").textContent = version;
   $("i-address").textContent = address;
   $("i-explorer").innerHTML = `<a href="${EXPLORER}/address/${address}" target="_blank" rel="noopener">${EXPLORER.replace("https://", "")}/address/…</a>`;
+  // Which of the signer's two processes can reach the keystore (0.5.0 and later).
+  try { $("i-keystore").textContent = (await board.ask(customRequest(5))).map.get(6) ?? "–"; }
+  catch (e) { $("i-keystore").textContent = "not reported by this signer version"; }
   if (!$("t-to").value) $("t-to").value = address;
   enable(true);
   log(`signer ${version}, address ${address}`);

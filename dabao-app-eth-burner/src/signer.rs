@@ -46,6 +46,16 @@ mod store {
             Keystore(xns.request_connection_blocking(keystore_api::SERVER_NAME_KEYS).expect("keystore"))
         }
 
+        /// Whether the keystore refuses a further connection: it does when it
+        /// was built to accept a single client (xous-core's
+        /// `keystore/single-client`) and this process holds that one. A stock
+        /// dabao keystore accepts any number.
+        pub fn sealed(&self) -> bool {
+            xous_names::XousNames::new()
+                .map(|xns| xns.request_connection(keystore_api::SERVER_NAME_KEYS).is_err())
+                .unwrap_or(false)
+        }
+
         fn call(&self, op: keystore_api::AppKey) -> keystore_api::AppKey {
             use keystore_api::AppKey;
             let Ok(mut buf) = xous_ipc::Buffer::into_buf(op) else { return AppKey::InternalError };
@@ -179,6 +189,8 @@ fn load_or_create(slots: &mut impl Slots) -> Zeroizing<[u8; 32]> {
 struct Burner<C: Confirm> {
     seed: Zeroizing<[u8; 64]>,
     confirm: C,
+    /// What this process found about the keystore at boot, for `status`.
+    keystore: &'static str,
 }
 
 fn error(code: ErrorCode, msg: &str) -> Vec<u8> {
@@ -219,6 +231,9 @@ impl<C: Confirm> Burner<C> {
                 return Ok(protocol::encode_frame(TYPE_CUSTOM, &protocol::message_response(&seen)));
             }
             Ok(Request::Reboot) => return reboot_soon(),
+            Ok(Request::Status) => {
+                return Ok(protocol::encode_frame(TYPE_CUSTOM, &protocol::message_response(self.keystore)));
+            }
             _ => return Err(error(ErrorCode::InvalidRequest, "")),
         };
         let node = self.node(&path)?;
@@ -282,6 +297,15 @@ pub fn run() -> ! {
     let mut slots = store::Keystore::open();
     #[cfg(not(target_os = "xous"))]
     let mut slots = store::HostFile::open();
+    #[cfg(target_os = "xous")]
+    let keystore = if slots.sealed() {
+        "approver: holds the keystore's only connection"
+    } else {
+        "approver: connected, but this keystore accepts other processes too"
+    };
+    #[cfg(not(target_os = "xous"))]
+    let keystore = "approver: emulator, the seed is in a host file";
+    log::info!("{keystore}");
     let entropy = load_or_create(&mut slots);
     let seed = Zeroizing::new(signer_signing::seed_from_entropy(&entropy[..], "").expect("seed"));
     drop(entropy);
@@ -289,7 +313,7 @@ pub fn run() -> ! {
     let confirm = confirm::Touch::new();
     #[cfg(not(target_os = "xous"))]
     let confirm = confirm::HostFile::new();
-    let mut burner = Burner { seed, confirm };
+    let mut burner = Burner { seed, confirm, keystore };
     let first = [(44, true), (60, true), (0, true), (0, false), (0, false)];
     let path = DerivationPath {
         components: first.iter().map(|&(index, hardened)| signer_core::ChildNumber { index, hardened }).collect(),

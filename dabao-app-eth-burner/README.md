@@ -105,22 +105,44 @@ faces the host is the code most likely to have a memory-safety bug; in one proce
 the seed or jump past the touch check. Split this way it can only do what the front desk can do: ask the
 approver to handle a request, which for a signature still waits for a finger on the pad.
 
-What the split does **not** do, on a stock dabao image:
+### The keystore, sealed
 
-* **The keystore is open to every process.** On the dabao it registers for unlimited connections (the
-  `baosec` configuration limits it to a known list), and the application key slots have no per-process
-  check. A front desk that was fully taken over could connect to the keystore and read slots 132..133,
-  the seed, without going through the approver. Closing this needs a change in xous-core: a connection
-  limit for the dabao's keystore that the approver's connection uses up. Not done here.
-* **The pin and BIO services are open too.** The same front desk could reconfigure pad `PB1` through
-  `bao1x-hal-service` and disturb what the touch sensor reads.
+Separate memory is not enough by itself. On a stock dabao image the keystore registers for unlimited
+connections (the `baosec` configuration limits it to a known list), and the application key slots have no
+per-process check: a front desk that was fully taken over could connect to the keystore and read slots
+132..133, the seed, without going through the approver.
+
+Our xous-core fork adds a keystore feature, `single-client`
+([branch `dabao-keystore-single-client`](https://github.com/BlockIndia-LLC/xous-core/tree/dabao-keystore-single-client)):
+the dabao's keystore then accepts one connection. The approver makes it at boot, before it starts
+answering the front desk, and xous-names refuses every later request. On this image nothing else uses the
+keystore.
+
+The `status` command shows it from the board. At boot the approver tries a second connection, and the
+front desk tries a first one, as a taken-over front desk would:
+
+| Image | Approver | Front desk |
+|---|---|---|
+| stock keystore | connected, but this keystore accepts other processes too | the keystore ACCEPTED a connection |
+| `--feature keystore/single-client` | holds the keystore's only connection | the keystore refused a connection |
+
+Both rows were read from the test board (0.5.0).
+
+What the split still does **not** do:
+
+* **The pin and BIO services are open.** They register for unlimited connections too: a front desk that was
+  taken over could reconfigure pad `PB1` through `bao1x-hal-service` and disturb what the touch sensor
+  reads. Not addressed.
+* **Trust on first use.** The seal holds because the approver connects before anything else can ask. A
+  process that got to the keystore first would hold the one connection instead; the approver would then
+  wait for ever and nothing would be signed.
 * **It doesn't show what is signed.** The front desk passes on whatever the host sends; a touch approves
   it unseen.
 * A bug in the approver itself is still fatal. It is the smaller part: it never parses the HID framing,
   but it does decode the request it is asked to sign.
 
-So today the split protects the approver's memory, and it is the structure that the keystore limit and a
-display owned by the approver would complete.
+So the seed is out of the front desk's reach by both routes, memory and keystore, and the split is the
+structure that a display owned by the approver would complete.
 
 ## Build and run
 
@@ -161,7 +183,7 @@ Codespace, 4 cores; nothing is installed on the PC the board is plugged into). R
 
 ```sh
 # 1. the two repositories, side by side
-git clone --branch devcon8-workshop https://github.com/BlockIndia-LLC/xous-core.git     # commit d1d4b9b
+git clone --branch dabao-keystore-single-client https://github.com/BlockIndia-LLC/xous-core.git   # devcon8-workshop (d1d4b9b) + 1 commit
 git clone --branch touch-confirm    https://github.com/BlockIndia-LLC/ethereum-app.git
 
 # 2. Rust, and the version tags the Xous build checks for
@@ -183,8 +205,11 @@ cargo test --release
 #    xous-core/target/riscv32imac-unknown-xous-elf/release/
 cd ../../xous-core
 R=../ethereum-app/dabao-app-eth-burner/target/riscv32imac-unknown-xous-elf/release
-cargo xtask dabao $R/eth-approver $R/eth-burner --feature usb-bao1x/generic-hid
+cargo xtask dabao $R/eth-approver $R/eth-burner --feature usb-bao1x/generic-hid --feature keystore/single-client
 ```
+
+Without `--feature keystore/single-client` the image has the stock keystore, open to every process (see
+"The keystore, sealed").
 
 The images are signed with the public developer key. A bao1x that boots one erases its factory secrets
 and counts itself, for good, as a developer device.
@@ -251,6 +276,9 @@ The checks to run on a real board are in xous-core's
 * 0.4.0, as two processes: get-version (front desk) and get-address (approver, same address as before);
   `probe-confirm` reads the pad; sign-message is refused after 15 s without a touch and signed after one; a request naming
   another address is refused at once (159 ms).
+* 0.5.0: `status` on a stock image and on a `keystore/single-client` image, as in "The keystore, sealed".
+  On the sealed image: get-address (same address, so the approver reads the seed), `probe-confirm`, and
+  sign-message refused after 15 s without a touch.
 
 Not run on a board yet: sign-typed-data, a second board.
 

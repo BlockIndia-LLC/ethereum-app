@@ -18,7 +18,7 @@
 ; Over USB HID the envelope is cut into 64-byte reports, the last one padded
 ; with zeros; one request at a time.
 
-request = get-address / get-version / probe-confirm / reboot
+request = get-address / get-version / probe-confirm / reboot / status
 
 ; Return the public key, address and chain code at `path`, at once.
 get-address = {
@@ -42,6 +42,14 @@ probe-confirm = {
 ; (it lands in the bootloader). Not available in the emulator.
 reboot = {
   command: 4,
+}
+
+; Development aid. Return, as text in a message-response, two lines: what the
+; approver found about the keystore at boot, then what the front desk found
+; when it tried to connect to it ("refused" on an image built with
+; keystore/single-client, "ACCEPTED" on a stock one).
+status = {
+  command: 5,
 }
 
 response = address-response / version-response / message-response / error-response
