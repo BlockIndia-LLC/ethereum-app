@@ -1166,7 +1166,7 @@ dependencies = [
 
 [[package]]
 name = "dabao-eth-burner"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "arbitrary-int",
  "bao1x-api",
@@ -1174,8 +1174,10 @@ dependencies = [
  "bio-lib",
  "ciborium",
  "getrandom 0.2.12",
+ "k256",
  "keystore-api",
  "log",
+ "ripemd",
  "sha2",
  "signer-core",
  "signer-decoding",
