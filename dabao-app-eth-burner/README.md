@@ -163,10 +163,14 @@ others), with the same touch. This is on the `antelope-signer` branch.
 An Antelope account is a name, not an address: before the board can sign for an account, its
 `PUB_K1_...` key has to be set as (one of) the account's keys.
 
-It runs on the real board. A transfer signed by it, after a touch, was accepted by the Telos test
-network: transaction
-[`82eff55b…2fbf60b2`](https://testnet.telos.net/v2/history/get_transaction?id=82eff55b516ecfe5c831857b07e4b496b0ad945ea29f282f0f58c6372fbf60b2)
-from the account `dabaosigner1`, whose owner and active key is the board's key.
+It runs on the real board. Transactions signed by it, each after a touch, were executed by two test
+networks, from an account `dabaosigner1` on each whose owner and active key is the board's key:
+
+| Network | Transaction | What |
+|---|---|---|
+| Telos testnet | [`82eff55b…2fbf60b2`](https://testnet.telos.net/v2/history/get_transaction?id=82eff55b516ecfe5c831857b07e4b496b0ad945ea29f282f0f58c6372fbf60b2) | transfer of 0.0001 TLOS |
+| XPR Network testnet | [`539be56f…1bd8b317`](https://testnet.explorer.xprnetwork.org/transaction/539be56ffd84b01fb18c10be2fb80001345195efefec5379f67d36371bd8b317) | `token.faucet::claim`, which gave the account 1000 XPR |
+| XPR Network testnet | [`d6925271…db4d7755`](https://testnet.explorer.xprnetwork.org/transaction/d6925271b3d27381f0bf8efb93fb4a1825e0313f96eab5c7c05d641bdb4d7755) | transfer of 0.0001 XPR |
 
 The host side is `tools/antelope/antelope_client.mjs`. Everything Antelope in it (serializing, the
 digest, checking keys and signatures, broadcasting) is done by
@@ -183,6 +187,9 @@ cd tools/antelope && npm install
 node antelope_client.mjs get-key
 node antelope_client.mjs transfer --network xpr-testnet --from <account> --to <account> \
     --quantity "0.0001 XPR" --key <PUB_K1 of get-key> --no-broadcast
+# any one action; its data is serialized with the contract's ABI, fetched from the network
+node antelope_client.mjs action --network xpr-testnet --from <account> --contract token.faucet \
+    --action claim --data '{"programId":1,"account":"<account>"}' --key <PUB_K1>
 ```
 
 For a board plugged into another machine (here: a Windows PC with nothing installed), `--relay FILE`
@@ -361,9 +368,13 @@ The checks to run on a real board are in xous-core's
   signed on the 15th request, after one; Wharfkit recovered the board's key from the signature and the
   Telos test network executed it in block 456158590:
   `82eff55b516ecfe5c831857b07e4b496b0ad945ea29f282f0f58c6372fbf60b2`.
+  On the XPR Network test network, the same way: a `token.faucet::claim` (block 416960098,
+  `539be56ffd84b01fb18c10be2fb80001345195efefec5379f67d36371bd8b317`)
+  and a transfer of 0.0001 XPR (block 416960461,
+  `d6925271b3d27381f0bf8efb93fb4a1825e0313f96eab5c7c05d641bdb4d7755`).
+  A transfer to `token.faucet` was signed correctly too, but that contract refuses incoming transfers.
 
-Not run on a board yet: sign-typed-data, a second board, an Antelope transaction on XPR Network, a
-Telos EVM transaction.
+Not run on a board yet: sign-typed-data, a second board, a Telos EVM transaction.
 
 ## Layout
 

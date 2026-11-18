@@ -13,6 +13,10 @@
 //                       [--contract eosio.token] [--no-broadcast]
 //       builds the transfer, has it signed (touch the pad, or create the
 //       approval file in the emulator), checks the signature and broadcasts it
+//   antelope_client.mjs action --network xpr-testnet --from A --contract token.faucet
+//                       --action claim --data '{"programId":2,"account":"A"}'
+//       the same for any one action; its data is serialized with the
+//       contract's ABI, fetched from the network
 //
 // Talking to the signer:
 //   --tcp HOST:PORT   the emulator (default 127.0.0.1:7600)
@@ -321,7 +325,27 @@ async function selftest(a) {
 }
 
 async function transfer(a) {
-    for (const k of ['network', 'from', 'to', 'quantity']) if (!a[k]) throw new Error(`--${k} is needed`)
+    for (const k of ['from', 'to', 'quantity']) if (!a[k]) throw new Error(`--${k} is needed`)
+    await signAndPush(a, `${a.from} -> ${a.to}: ${a.quantity}`, async () => transferAction(a))
+}
+
+/** Any one action, its data given as JSON and serialized with the contract's ABI. */
+async function action(a) {
+    for (const k of ['from', 'contract', 'action', 'data']) if (!a[k]) throw new Error(`--${k} is needed`)
+    await signAndPush(a, `${a.contract}::${a.action} ${a.data} as ${a.from}`, async (client) => {
+        const {abi} = await client.v1.chain.get_abi(a.contract)
+        if (!abi) throw new Error(`${a.contract} has no ABI`)
+        return Action.from({
+            account: a.contract,
+            name: a.action,
+            authorization: [{actor: a.from, permission: a.permission ?? 'active'}],
+            data: JSON.parse(a.data),
+        }, abi)
+    })
+}
+
+async function signAndPush(a, what, makeAction) {
+    if (!a.network) throw new Error('--network is needed')
     const url = NETWORKS[a.network] ?? a.network
     if (!/testnet|localhost|127\.0\.0\.1/.test(url) && !a.iKnowThisIsNotATestnet) {
         throw new Error('test networks only: this signer cannot show what it signs')
@@ -330,9 +354,9 @@ async function transfer(a) {
     const p = a.path ?? DEFAULT_PATH
     const {state, body: b} = await exchange(a, async () => {
         const info = await client.v1.chain.get_info()
-        const tx = Transaction.from({...info.getTransactionHeader(Number(a.expireSeconds ?? 600)), actions: [transferAction(a)]})
+        const tx = Transaction.from({...info.getTransactionHeader(Number(a.expireSeconds ?? 600)), actions: [await makeAction(client)]})
         const packed = serialize(tx)
-        console.log(`${a.from} -> ${a.to}: ${a.quantity} on ${url}`)
+        console.log(`${what} on ${url}`)
         console.log(`transaction ${tx.id}, ${packed.length} bytes, expires ${tx.expiration}`)
         if (!a.relay) console.log('approve it now: touch the pad (or create the approval file in the emulator)')
         return {
@@ -352,10 +376,10 @@ async function transfer(a) {
 }
 
 const args = parseArgs(process.argv.slice(2))
-const commands = {'get-key': getKey, selftest, transfer}
+const commands = {'get-key': getKey, selftest, transfer, action}
 const command = commands[args._[0]]
 if (!command) {
-    console.error('usage: antelope_client.mjs get-key | selftest | transfer ... (see the top of this file)')
+    console.error('usage: antelope_client.mjs get-key | selftest | transfer | action ... (see the top of this file)')
     process.exit(2)
 }
 command(args).then(() => process.exit(0), (e) => {
