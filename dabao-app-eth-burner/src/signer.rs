@@ -17,7 +17,7 @@ use zeroize::Zeroizing;
 
 use crate::confirm::{self, Confirm, Decision};
 use crate::protocol::{self, ErrorCode, Request, TYPE_CUSTOM, TYPE_ERC4527};
-use crate::{ipc, transport, VERSION};
+use crate::{antelope, ipc, transport, VERSION};
 
 /// The burner's seed storage: two 32-byte slots.
 /// * slot 0: the entropy (that of a 24-word BIP-39 phrase);
@@ -234,12 +234,69 @@ impl<C: Confirm> Burner<C> {
             Ok(Request::Status) => {
                 return Ok(protocol::encode_frame(TYPE_CUSTOM, &protocol::message_response(self.keystore)));
             }
+            Ok(Request::AntelopeKey(path)) => {
+                let (_, public, text) = self.antelope_key(&path)?;
+                log::info!("antelope get-key {path}: {text}");
+                return Ok(protocol::encode_frame(TYPE_CUSTOM, &protocol::antelope_key_response(&public, &text)));
+            }
+            Ok(Request::AntelopeSign(req)) => return self.antelope_sign(&req),
             _ => return Err(error(ErrorCode::InvalidRequest, "")),
         };
         let node = self.node(&path)?;
         let address = node.address().to_checksum(None);
         log::info!("get-address {path}: {address}");
         let reply = protocol::address_response(&node.uncompressed(), &address, &node.chain_code());
+        Ok(protocol::encode_frame(TYPE_CUSTOM, &reply))
+    }
+
+    /// Wait for the person holding the device to approve `what` (`confirm`).
+    fn approve(&mut self, what: &str) -> Result<(), Vec<u8>> {
+        let (how, secs) = (self.confirm.how(), self.confirm.timeout().as_secs());
+        log::info!("{what}: {how} within {secs} s to approve");
+        match self.confirm.confirm() {
+            Decision::Approved => Ok(()),
+            Decision::TimedOut(seen) => {
+                log::info!("{what}: not approved ({seen})");
+                Err(error(ErrorCode::UserRejected, &format!("not approved: {how} within {secs} s ({seen})")))
+            }
+            Decision::Unavailable(why) => {
+                log::error!("{what}: can't ask for approval ({why})");
+                Err(error(ErrorCode::NotReady, &format!("can't ask for approval: {why}")))
+            }
+        }
+    }
+
+    /// The Antelope key at `path` (under m/44'/194' only), with its public
+    /// key as bytes and as `PUB_K1_` text.
+    fn antelope_key(&self, path: &DerivationPath) -> Result<(k256::ecdsa::SigningKey, [u8; 33], String), Vec<u8>> {
+        if !antelope::path_allowed(path) {
+            return Err(error(ErrorCode::InvalidRequest, "Antelope keys are under m/44'/194'"));
+        }
+        let key = signer_signing::key_from_seed(&self.seed, path)
+            .map_err(|_| error(ErrorCode::InvalidRequest, "invalid path"))?;
+        let public: [u8; 33] =
+            key.verifying_key().to_encoded_point(true).as_bytes().try_into().expect("compressed key");
+        let text = antelope::public_key_text(&public);
+        Ok((key, public, text))
+    }
+
+    /// `sign-antelope-tx`: nothing is shown and the transaction isn't looked
+    /// into, but it is only signed once the person holding the device
+    /// approves it (`confirm`).
+    fn antelope_sign(&mut self, req: &protocol::AntelopeSign) -> Result<Vec<u8>, Vec<u8>> {
+        let (key, _, text) = self.antelope_key(&req.path)?;
+        if req.public_key.as_ref().is_some_and(|expected| *expected != text) {
+            return Err(error(ErrorCode::InvalidRequest, "public key mismatch: not this device's key"));
+        }
+        let what = format!("antelope sign-request {}", req.path);
+        self.approve(&what)?;
+        let digest = antelope::signing_digest(&req.chain_id, &req.transaction);
+        let sig = antelope::sign(&key, &digest).ok_or_else(|| {
+            log::error!("{what}: signing failed");
+            error(ErrorCode::Internal, "signing failed")
+        })?;
+        log::info!("{what}: signed");
+        let reply = protocol::antelope_signature_response(&sig, &antelope::signature_text(&sig));
         Ok(protocol::encode_frame(TYPE_CUSTOM, &reply))
     }
 
@@ -253,19 +310,7 @@ impl<C: Confirm> Burner<C> {
         if req.address.is_some_and(|a| a != signer_signing::address_of(&key)) {
             return Err(error(ErrorCode::InvalidRequest, "address mismatch: not this device's key"));
         }
-        let (how, secs) = (self.confirm.how(), self.confirm.timeout().as_secs());
-        log::info!("sign-request {}: {how} within {secs} s to approve", req.derivation_path);
-        match self.confirm.confirm() {
-            Decision::Approved => {}
-            Decision::TimedOut(seen) => {
-                log::info!("sign-request {}: not approved ({seen})", req.derivation_path);
-                return Err(error(ErrorCode::UserRejected, &format!("not approved: {how} within {secs} s ({seen})")));
-            }
-            Decision::Unavailable(why) => {
-                log::error!("sign-request {}: can't ask for approval ({why})", req.derivation_path);
-                return Err(error(ErrorCode::NotReady, &format!("can't ask for approval: {why}")));
-            }
-        }
+        self.approve(&format!("sign-request {}", req.derivation_path))?;
         let sig = signer_signing::sign_request(&req, &key).map_err(|e| {
             log::error!("signing failed: {e}");
             error(ErrorCode::Internal, &e.to_string())

@@ -20,6 +20,10 @@ const KEY_ADDRESS: u64 = 3;
 const KEY_CHAIN_CODE: u64 = 4;
 const KEY_VERSION: u64 = 5;
 const KEY_MESSAGE: u64 = 6;
+const KEY_CHAIN_ID: u64 = 7;
+const KEY_TRANSACTION: u64 = 8;
+const KEY_SIGNATURE: u64 = 9;
+const KEY_TEXT: u64 = 10;
 
 const CMD_GET_ADDRESS: u64 = 1;
 const CMD_GET_VERSION: u64 = 2;
@@ -29,6 +33,10 @@ const CMD_PROBE_CONFIRM: u64 = 3;
 const CMD_REBOOT: u64 = 4;
 /// Development aid: which of the two processes can reach the keystore.
 const CMD_STATUS: u64 = 5;
+/// Antelope: the public key at a path under m/44'/194'.
+const CMD_ANTELOPE_KEY: u64 = 6;
+/// Antelope: sign a serialized transaction, after a touch.
+const CMD_ANTELOPE_SIGN: u64 = 7;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ErrorCode {
@@ -48,6 +56,19 @@ pub enum Request {
     ProbeConfirm,
     Reboot,
     Status,
+    AntelopeKey(DerivationPath),
+    AntelopeSign(AntelopeSign),
+}
+
+/// `sign-antelope-tx`: what to sign and with which key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AntelopeSign {
+    pub path: DerivationPath,
+    pub chain_id: [u8; 32],
+    /// The serialized transaction, as the chain packs it.
+    pub transaction: Vec<u8>,
+    /// If given, the `PUB_K1_` key the host expects at `path`.
+    pub public_key: Option<String>,
 }
 
 /// `length || type || message`.
@@ -93,18 +114,34 @@ fn get(map: &[(Value, Value)], key: u64) -> Option<&Value> {
     map.iter().find(|(k, _)| as_u64(k) == Some(key)).map(|(_, v)| v)
 }
 
+fn path_of(map: &[(Value, Value)]) -> Result<DerivationPath, ErrorCode> {
+    let path = get(map, KEY_PATH).ok_or(ErrorCode::InvalidRequest)?;
+    let path = signer_decoding::decode_keypath(path).map_err(|_| ErrorCode::InvalidRequest)?;
+    if path.components.len() > MAX_PATH_DEPTH {
+        return Err(ErrorCode::InvalidRequest);
+    }
+    Ok(path)
+}
+
 /// Decode a custom-CBOR request.
 pub fn decode_request(message: &[u8]) -> Result<Request, ErrorCode> {
     let value: Value = ciborium::from_reader(message).map_err(|_| ErrorCode::InvalidRequest)?;
     let Value::Map(map) = value else { return Err(ErrorCode::InvalidRequest) };
     match get(&map, KEY_COMMAND).and_then(as_u64) {
-        Some(CMD_GET_ADDRESS) => {
-            let path = get(&map, KEY_PATH).ok_or(ErrorCode::InvalidRequest)?;
-            let path = signer_decoding::decode_keypath(path).map_err(|_| ErrorCode::InvalidRequest)?;
-            if path.components.len() > MAX_PATH_DEPTH {
+        Some(CMD_GET_ADDRESS) => Ok(Request::GetAddress(path_of(&map)?)),
+        Some(CMD_ANTELOPE_KEY) => Ok(Request::AntelopeKey(path_of(&map)?)),
+        Some(CMD_ANTELOPE_SIGN) => {
+            let bytes = |key| get(&map, key).and_then(Value::as_bytes).ok_or(ErrorCode::InvalidRequest);
+            let chain_id = bytes(KEY_CHAIN_ID)?[..].try_into().map_err(|_| ErrorCode::InvalidRequest)?;
+            let transaction = bytes(KEY_TRANSACTION)?.clone();
+            if transaction.is_empty() {
                 return Err(ErrorCode::InvalidRequest);
             }
-            Ok(Request::GetAddress(path))
+            let public_key = match get(&map, KEY_TEXT) {
+                Some(v) => Some(v.as_text().ok_or(ErrorCode::InvalidRequest)?.to_owned()),
+                None => None,
+            };
+            Ok(Request::AntelopeSign(AntelopeSign { path: path_of(&map)?, chain_id, transaction, public_key }))
         }
         Some(CMD_GET_VERSION) => Ok(Request::GetVersion),
         Some(CMD_PROBE_CONFIRM) => Ok(Request::ProbeConfirm),
@@ -127,6 +164,24 @@ pub fn address_response(public_key: &[u8; 65], address: &str, chain_code: &[u8; 
         (int(KEY_PUBLIC_KEY), Value::Bytes(public_key.to_vec())),
         (int(KEY_ADDRESS), Value::Text(address.into())),
         (int(KEY_CHAIN_CODE), Value::Bytes(chain_code.to_vec())),
+    ])
+}
+
+/// Antelope: a compressed public key and its `PUB_K1_` text.
+pub fn antelope_key_response(public_key: &[u8; 33], text: &str) -> Vec<u8> {
+    encode(vec![
+        (int(KEY_STATUS), int(0)),
+        (int(KEY_PUBLIC_KEY), Value::Bytes(public_key.to_vec())),
+        (int(KEY_TEXT), Value::Text(text.into())),
+    ])
+}
+
+/// Antelope: a signature (`31 + recovery id || r || s`) and its `SIG_K1_` text.
+pub fn antelope_signature_response(signature: &[u8; 65], text: &str) -> Vec<u8> {
+    encode(vec![
+        (int(KEY_STATUS), int(0)),
+        (int(KEY_SIGNATURE), Value::Bytes(signature.to_vec())),
+        (int(KEY_TEXT), Value::Text(text.into())),
     ])
 }
 
@@ -257,6 +312,38 @@ mod tests {
         let deep: Vec<(u64, bool)> = (0..11).map(|i| (i, false)).collect();
         let r = request(vec![(int(1), int(1)), (int(2), keypath(&deep, true))]);
         assert_eq!(decode_request(&r), Err(ErrorCode::InvalidRequest));
+    }
+
+    #[test]
+    fn decodes_antelope_requests() {
+        let path = [(44, true), (194, true), (0, true), (0, false), (0, false)];
+        let r = request(vec![(int(1), int(6)), (int(2), keypath(&path, true))]);
+        match decode_request(&r).unwrap() {
+            Request::AntelopeKey(p) => assert_eq!(p.to_string(), "m/44'/194'/0'/0/0"),
+            other => panic!("{other:?}"),
+        }
+        let sign = |chain_id: Vec<u8>, tx: Vec<u8>, key: Option<Value>| {
+            let mut e = vec![
+                (int(1), int(7)),
+                (int(2), keypath(&path, true)),
+                (int(7), Value::Bytes(chain_id)),
+                (int(8), Value::Bytes(tx)),
+            ];
+            e.extend(key.map(|k| (int(10), k)));
+            decode_request(&request(e))
+        };
+        match sign(vec![9; 32], vec![1, 2, 3], Some(Value::Text("PUB_K1_x".into()))).unwrap() {
+            Request::AntelopeSign(s) => {
+                assert_eq!(s.path.to_string(), "m/44'/194'/0'/0/0");
+                assert_eq!((s.chain_id, &s.transaction[..]), ([9; 32], &[1u8, 2, 3][..]));
+                assert_eq!(s.public_key.as_deref(), Some("PUB_K1_x"));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(sign(vec![9; 32], vec![1], None), Ok(Request::AntelopeSign(s)) if s.public_key.is_none()));
+        assert_eq!(sign(vec![9; 31], vec![1], None), Err(ErrorCode::InvalidRequest), "short chain id");
+        assert_eq!(sign(vec![9; 32], vec![], None), Err(ErrorCode::InvalidRequest), "no transaction");
+        assert_eq!(sign(vec![9; 32], vec![1], Some(int(5))), Err(ErrorCode::InvalidRequest), "key not text");
     }
 
     #[test]

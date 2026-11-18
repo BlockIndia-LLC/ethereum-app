@@ -1,4 +1,5 @@
 ; dabao Ethereum burner: custom CBOR protocol (message type 0x02).
+; Since 0.6.0 it also signs Antelope transactions (commands 6 and 7).
 ;
 ; Transport envelope (both directions, all transports):
 ;   length (4 bytes, big-endian) || type (1 byte) || message
@@ -19,6 +20,7 @@
 ; with zeros; one request at a time.
 
 request = get-address / get-version / probe-confirm / reboot / status
+        / get-antelope-key / sign-antelope-tx
 
 ; Return the public key, address and chain code at `path`, at once.
 get-address = {
@@ -52,7 +54,44 @@ status = {
   command: 5,
 }
 
+; Antelope (XPR Network, Telos, EOS, ...). Return the public key at `path`,
+; at once. Only paths under m/44'/194' are accepted (usually
+; m/44'/194'/0'/0/0); any other is an invalid-request.
+get-antelope-key = {
+  command: 6,
+  path: #6.304(crypto-keypath),
+}
+
+; Antelope. Sign a transaction with the key at `path` (under m/44'/194'),
+; after a touch on pad PB1, within 15 seconds. The signer hashes
+;   chain-id || transaction || 32 zero bytes
+; with SHA-256 (the zeros: no context-free data) and signs that. It does not
+; look inside `transaction`, and nothing is shown. The signature is
+; "canonical", as the nodes require.
+; A `text` that isn't this device's key at `path` is refused at once.
+sign-antelope-tx = {
+  command: 7,
+  path: #6.304(crypto-keypath),
+  chain-id: bytes .size 32,       ; of the network the transaction is for
+  transaction: bytes,             ; the transaction as the chain serializes it, not empty
+  ? text: text,                   ; the "PUB_K1_..." key the host expects
+}
+
 response = address-response / version-response / message-response / error-response
+         / antelope-key-response / antelope-signature-response
+
+antelope-key-response = {
+  status: 0,
+  public-key: bytes .size 33,     ; compressed SEC1: 0x02 or 0x03 || x
+  text: text,                     ; "PUB_K1_" + base58(key || checksum)
+}
+
+; checksum: the first 4 bytes of RIPEMD-160(data || "K1")
+antelope-signature-response = {
+  status: 0,
+  signature: bytes .size 65,      ; (31 + recovery id) || r || s
+  text: text,                     ; "SIG_K1_" + base58(signature || checksum)
+}
 
 message-response = {
   status: 0,
@@ -93,6 +132,10 @@ address = 3
 chain-code = 4
 version = 5
 message = 6
+chain-id = 7
+transaction = 8
+signature = 9
+text = 10
 
 ; from ERC-4527 (crypto-keypath, CDDL for key path); index ranges and
 ; wildcards are rejected by this application

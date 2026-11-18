@@ -144,6 +144,53 @@ What the split still does **not** do:
 So the seed is out of the front desk's reach by both routes, memory and keystore, and the split is the
 structure that a display owned by the approver would complete.
 
+## Antelope: XPR Network and Telos
+
+Since 0.6.0 the same board also signs transactions for Antelope chains (XPR Network, Telos, EOS and
+others), with the same touch. This is on the `antelope-signer` branch.
+
+* `get-antelope-key` returns the public key at a path, as `PUB_K1_...`. It is answered at once.
+* `sign-antelope-tx` takes a path, the network's chain id and the serialized transaction. After a touch
+  on `PB1` it returns the signature, as `SIG_K1_...`.
+* Only paths under `m/44'/194'` are accepted; the usual one is `m/44'/194'/0'/0/0`, as the Ledger EOS
+  app uses. So an Antelope request can never use the Ethereum key, which is under `m/44'/60'`.
+* The signer hashes the chain id, the transaction and 32 zero bytes with SHA-256 and signs that, which is
+  what a node checks. It doesn't look inside the transaction. **As with Ethereum, the touch says "sign",
+  not "sign this". Test networks only.**
+* An Antelope node only accepts "canonical" signatures, which about half of all signatures are not. The
+  signer makes a new one, with a counter mixed into the (deterministic) nonce, until it is canonical.
+
+An Antelope account is a name, not an address: before the board can sign for an account, its
+`PUB_K1_...` key has to be set as (one of) the account's keys.
+
+The host side is `tools/antelope/antelope_client.mjs`. Everything Antelope in it (serializing, the
+digest, checking keys and signatures, broadcasting) is done by
+[@wharfkit/antelope](https://github.com/wharfkit/antelope), so it also checks the signer against an
+independent implementation.
+
+```sh
+cd tools/antelope && npm install
+
+# emulator: starts it with a known seed and checks key, derivation and signatures against Wharfkit
+./test_emulator.sh
+
+# by hand, with the emulator running
+node antelope_client.mjs get-key
+node antelope_client.mjs transfer --network xpr-testnet --from <account> --to <account> \
+    --quantity "0.0001 XPR" --key <PUB_K1 of get-key> --no-broadcast
+```
+
+For a board plugged into another machine (here: a Windows PC with nothing installed), `--relay FILE`
+splits a command in two. The first run prints the request as hex; send it with
+`tools/windows/dabao-hid-send.ps1 -Hex ...` and touch the pad; then run the same command again with
+`--reply <the hex the board answered>`, which checks the signature and broadcasts the transaction.
+
+### Telos EVM
+
+Telos also has an Ethereum-compatible side. That one needs nothing new: it is an ordinary Ethereum
+transaction with chain id 40 (41 on the test network), for example
+`tools/eth_client.py sign-tx --legacy --chain-id 41`. Not tried on that network yet.
+
 ## Build and run
 
 With xous-core (branch `dabao-burner`) checked out next to `ethereum-app`, and the Xous toolchain installed
@@ -304,11 +351,13 @@ Not run on a board yet: sign-typed-data, a second board.
 | `src/approver.rs`, `src/signer.rs` | `eth-approver`: seed creation and storage (keystore slots or a host file), request handling and signing |
 | `src/ipc.rs` | the one message between the two processes |
 | `src/lib.rs` | the modules shared by the two binaries |
+| `src/antelope.rs` | Antelope: signing digest, canonical signatures, `PUB_K1_` / `SIG_K1_` text (unit tested against Wharfkit's values) |
 | `src/confirm.rs` | approval of a signing request: touch pad (device) or a file (emulator) |
 | `src/protocol.rs` | framing, custom CBOR, HID chunking (unit tested) |
 | `src/transport.rs` | HID (device) and TCP (emulator) transports; answers get-version |
 | `protocol.cddl` | protocol definition |
 | `tools/eth_client.py`, `tools/ethlib.py` | host client and its Ethereum helpers |
+| `tools/antelope/` | Antelope host client and emulator test (Node, @wharfkit/antelope) |
 | `tools/web/` | browser wallet page (WebHID) and a local server for it |
 | `tools/windows/*.ps1` | Windows host scripts: flash, sign, touch meter, raw requests |
 | `docs/` | illustrations for this README |

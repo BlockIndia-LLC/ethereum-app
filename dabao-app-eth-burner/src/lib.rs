@@ -11,6 +11,7 @@
 //! a bug in the code that parses what the host sends can't read the seed out
 //! of the approver's memory or skip the touch. What that does not cover is in
 //! the README ("Two processes").
+pub mod antelope;
 pub mod confirm;
 pub mod ipc;
 #[allow(dead_code)] // error codes and helpers the burner doesn't use

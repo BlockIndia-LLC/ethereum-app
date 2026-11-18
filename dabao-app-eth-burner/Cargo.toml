@@ -1,6 +1,6 @@
 [package]
 name = "dabao-eth-burner"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Ethereum burner signer for a bare dabao (Xous, no screen, USB HID)"
@@ -33,6 +33,10 @@ ciborium = "0.2"
 signer-core = { path = "../common-eth-signer/crates/core" }
 signer-signing = { path = "../common-eth-signer/crates/signing" }
 signer-decoding = { path = "../common-eth-signer/crates/decoding" }
+
+# Antelope (XPR Network, Telos): canonical signatures and the K1 text forms
+k256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
+ripemd = { version = "0.1", default-features = false }
 
 # seed creation and storage
 sha2 = "0.10"
