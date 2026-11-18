@@ -163,6 +163,11 @@ others), with the same touch. This is on the `antelope-signer` branch.
 An Antelope account is a name, not an address: before the board can sign for an account, its
 `PUB_K1_...` key has to be set as (one of) the account's keys.
 
+It runs on the real board. A transfer signed by it, after a touch, was accepted by the Telos test
+network: transaction
+[`82eff55b…2fbf60b2`](https://testnet.telos.net/v2/history/get_transaction?id=82eff55b516ecfe5c831857b07e4b496b0ad945ea29f282f0f58c6372fbf60b2)
+from the account `dabaosigner1`, whose owner and active key is the board's key.
+
 The host side is `tools/antelope/antelope_client.mjs`. Everything Antelope in it (serializing, the
 digest, checking keys and signatures, broadcasting) is done by
 [@wharfkit/antelope](https://github.com/wharfkit/antelope), so it also checks the signer against an
@@ -190,6 +195,16 @@ splits a command in two. The first run prints the request as hex; send it with
 Telos also has an Ethereum-compatible side. That one needs nothing new: it is an ordinary Ethereum
 transaction with chain id 40 (41 on the test network), for example
 `tools/eth_client.py sign-tx --legacy --chain-id 41`. Not tried on that network yet.
+
+### The size of the two programs
+
+The dabao's application area holds 892,928 bytes (`APP_RRAM_LEN` in xous-core's
+`libs/bao1x-api/src/offsets/dabao.rs`). A larger image is refused by the bootloader: the board's USB
+interface still appears, but nothing answers, not even get-version, and it takes the `RESET` button to
+get back to the bootloader. With Antelope added, `opt-level = "s"` gave 897,024 bytes, which is what
+happened to the first 0.6.0. The crate is now built with `opt-level = "z"`: 851,968 bytes. After
+`cargo xtask dabao`, check the size of `target/riscv32imac-unknown-xous-elf/release/app-presign.img` in
+xous-core before flashing.
 
 ## Build and run
 
@@ -340,8 +355,15 @@ The checks to run on a real board are in xous-core's
   On the sealed image: get-address (same address, so the approver reads the seed), `probe-confirm`, and
   sign-message refused after 15 s without a touch and signed after one (from the browser page, which
   also showed the two `status` lines).
+* 0.6.0 (sealed image): get-version, `status` and get-address as before (same address).
+  `get-antelope-key` at `m/44'/194'/0'/0/0` returned a key whose text Wharfkit reproduces, and refused
+  `m/44'/60'/0'/0/0`. `sign-antelope-tx` for a 122-byte transfer was refused 14 times without a touch and
+  signed on the 15th request, after one; Wharfkit recovered the board's key from the signature and the
+  Telos test network executed it in block 456158590:
+  `82eff55b516ecfe5c831857b07e4b496b0ad945ea29f282f0f58c6372fbf60b2`.
 
-Not run on a board yet: sign-typed-data, a second board.
+Not run on a board yet: sign-typed-data, a second board, an Antelope transaction on XPR Network, a
+Telos EVM transaction.
 
 ## Layout
 
