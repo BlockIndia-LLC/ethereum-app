@@ -238,8 +238,8 @@ the source. For these images, xous-core's `--no-timestamp` flag and a [baobit](h
 
 ### Browser page
 
-`tools/web/index.html` is a one-file wallet page that talks to the board over WebHID, in Chrome or Edge on a
-computer. Nothing is installed.
+`tools/web` is a small wallet page (`index.html`, `app.js`, `style.css`) that talks to the board over
+WebHID, in Chrome or Edge on a computer. Nothing is installed.
 
 * **Connect** shows the signer's version, the board's address and its Sepolia balance.
 * **Sign a message** and **Send a test transaction** ask the board, show a "touch the pad" banner with a
@@ -257,8 +257,22 @@ Browsers give WebHID only to pages served over https or from `localhost`, not to
 `python3 -m http.server 8765` in that folder does the same.
 
 The page is fixed to the Sepolia test network. It shows what it asks the board to sign, but the board has
-no screen: a compromised computer could ask for something else. It loads `ethers` 6.13.4 from a public CDN
-for the Ethereum encoding and the signature checks.
+no screen: a compromised computer could ask for something else.
+
+It is static: no server of its own, no accounts, nothing collected. What it depends on is in the folder:
+
+* `vendor/ethers-6.13.4.min.js` (MIT) does the Ethereum encoding and the signature checks. It is the file
+  from the npm package `ethers@6.13.4`, whose tarball matched the registry's sha512; its own sha256 is
+  `562de2cfc9021c75453b04c75587d20311fb585a6fb4acce5d872d21036170c2`.
+* A Content-Security-Policy allows scripts and styles from the page's own origin only, no inline script,
+  and network connections to one host, the Sepolia node `ethereum-sepolia-rpc.publicnode.com`, which is
+  asked for the balance, nonce and fees and given the transaction on Broadcast. That node sees the
+  address; it can lie about a balance but not forge a signature.
+* `dabao.selfTest()` in the browser console replays a request, a reply and a transaction captured from a
+  real board; every value should be `true`.
+
+Anyone can host a changed copy of this page. A copy can ask a board to sign something other than what it
+shows, and the touch would approve it: only use a copy you trust, on a test network.
 
 ### Windows host tools
 
