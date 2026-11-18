@@ -241,6 +241,10 @@ the source. For these images, xous-core's `--no-timestamp` flag and a [baobit](h
 `tools/web` is a small wallet page (`index.html`, `app.js`, `style.css`) that talks to the board over
 WebHID, in Chrome or Edge on a computer. Nothing is installed.
 
+**Try it: <https://blockindia-llc.github.io/ethereum-app/>** (a board running this signer is needed). That
+copy is published from this folder by `.github/workflows/pages.yml` on every push that changes it; the
+files are copied as they are, nothing is built.
+
 * **Connect** shows the signer's version, the board's address and its Sepolia balance.
 * **Sign a message** and **Send a test transaction** ask the board, show a "touch the pad" banner with a
   countdown, then recover the signer from the reply and compare it with the board's address. A transaction
@@ -252,8 +256,8 @@ WebHID, in Chrome or Edge on a computer. Nothing is installed.
   reported as not in the list. Someone using the page trusts that list, and the chip's own report.
 * A live meter of the touch sensor (`probe-confirm`).
 
-Browsers give WebHID only to pages served over https or from `localhost`, not to a file opened from disk:
-`pwsh -File tools/web/serve.ps1` serves the folder at `http://localhost:8765/` (this computer only), and
+Browsers give WebHID only to pages served over https or from `localhost`, not to a file opened from disk.
+To run your own copy, `pwsh -File tools/web/serve.ps1` serves the folder at `http://localhost:8765/` (this computer only), and
 `python3 -m http.server 8765` in that folder does the same.
 
 The page is fixed to the Sepolia test network. It shows what it asks the board to sign, but the board has
