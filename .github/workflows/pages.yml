@@ -1,0 +1,48 @@
+# Publishes the browser page in dabao-app-eth-burner/tools/web to GitHub Pages.
+# The page is static: nothing is built, the files are copied as they are in the repository.
+# Actions are pinned to full commit hashes so that a moved tag cannot change what runs here.
+name: Publish the browser page
+
+on:
+  push:
+    branches: [touch-confirm]
+    paths:
+      - dabao-app-eth-burner/tools/web/**
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Collect the page
+        run: |
+          mkdir -p _site/vendor
+          cd dabao-app-eth-burner/tools/web
+          cp index.html app.js style.css "$GITHUB_WORKSPACE/_site/"
+          cp vendor/* "$GITHUB_WORKSPACE/_site/vendor/"
+          echo "562de2cfc9021c75453b04c75587d20311fb585a6fb4acce5d872d21036170c2  $GITHUB_WORKSPACE/_site/vendor/ethers-6.13.4.min.js" | sha256sum -c -
+          touch "$GITHUB_WORKSPACE/_site/.nojekyll"
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
