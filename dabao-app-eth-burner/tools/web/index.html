@@ -2,21 +2,48 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src https://ethereum-sepolia-rpc.publicnode.com; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src https://ethereum-sepolia-rpc.publicnode.com; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dabao signer</title>
+<title>Dabao Workbench</title>
+<meta name="description" content="Check, test and sign with your Baochip-1x Dabao board, straight from the browser. A community project by BlocksIndia.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Dabao Workbench">
+<meta property="og:description" content="Check, test and sign with your Baochip-1x Dabao board, straight from the browser. A community project by BlocksIndia.">
+<meta property="og:url" content="https://blockindia-llc.github.io/ethereum-app/">
+<meta property="og:image" content="https://blockindia-llc.github.io/ethereum-app/card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Dabao Workbench">
+<meta name="twitter:description" content="Check, test and sign with your Baochip-1x Dabao board, straight from the browser. A community project by BlocksIndia.">
+<meta name="twitter:image" content="https://blockindia-llc.github.io/ethereum-app/card.png">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <main>
-  <h1>Dabao signer</h1>
-  <p class="lede">Talk to the touch-to-confirm Ethereum signer on a Baochip-1x Dabao board, straight from the browser. Nothing is installed: the page uses WebHID.</p>
-  <p class="warn banner"><b>Test network only. Not audited.</b> This is a demonstration for developers. The key in the board cannot be backed up, the board has no PIN, and it cannot show what it signs. Do not use it for anything of value.</p>
+  <h1>Dabao Workbench</h1>
+  <p class="byline">by BlocksIndia</p>
+  <p class="lede">Check, test and sign with your Baochip-1x Dabao board, straight from the browser. Nothing is installed: the page talks to the board over USB, in Chrome or Edge on a computer.</p>
+  <p class="warn banner"><b>Test network only. Not audited.</b> This is a tool for developers. With the signer firmware, the key in the board cannot be backed up, the board has no PIN, and it cannot show what it signs. Do not use it for anything of value.</p>
+
+  <section id="s-check">
+    <h2>1. Check your board <span class="tag">any Dabao</span></h2>
+    <p class="note">The first code the chip runs is its bootloader. This reads the fingerprints (SHA-512) the bootloader reports for its two stages and compares them with builds that were rebuilt from the public source. It works on a board as it comes, with no firmware of ours.</p>
+    <p class="note">Put the board in its bootloader: hold PROG, tap RESET, release PROG (a drive named BAOCHIP shows up). Then click "Read and check" and pick the board's serial port.</p>
+    <p id="serial-support" class="bad" hidden>This browser has no Web Serial. Use Chrome or Edge on a computer.</p>
+    <button id="b-check">Read and check</button>
+    <button id="b-to-boot" class="quiet" disabled>Restart into the bootloader</button>
+    <button id="b-to-signer" class="quiet" disabled>Start the signer again</button>
+    <p class="note gap-top">The two quieter buttons are for a board running the signer firmware (section 2): they move it into the bootloader and back without touching the board.</p>
+    <div class="out" id="c-out"></div>
+  </section>
 
   <section id="s-connect">
-    <h2>1. Connect the board</h2>
+    <h2>2. Connect the signer <span class="tag">needs the signer firmware</span></h2>
     <p id="support" class="bad" hidden>This browser has no WebHID. Use Chrome or Edge on a computer.</p>
-    <p class="note">Plug the board in and start the signer (press PROG if it is waiting in its bootloader). Then pick "Dabao HID" in the dialog.</p>
+    <p class="note">The rest of this page talks to the touch-to-confirm Ethereum signer, open firmware you can build and flash yourself: <a href="https://github.com/BlockIndia-LLC/ethereum-app/tree/touch-confirm/dabao-app-eth-burner" rel="noopener">source and build steps</a>.</p>
+    <p class="note">Plug the board in and start the signer (press PROG if it is waiting in its bootloader). Then pick "Dabao HID" in the dialog. Keep this page open in one tab only.</p>
     <button id="b-connect">Connect</button>
     <dl id="info" class="gap-top" hidden>
       <dt>Signer version</dt><dd id="i-version">–</dd>
@@ -25,17 +52,6 @@
       <dt>Sepolia balance</dt><dd id="i-balance">–</dd>
       <dt>Explorer</dt><dd id="i-explorer">–</dd>
     </dl>
-  </section>
-
-  <section id="s-check">
-    <h2>2. Check the bootloader</h2>
-    <p class="note">The first code the chip runs is its bootloader. This reads the fingerprints (SHA-512) the bootloader reports for its two stages and compares them with builds that were rebuilt from the public source. The check runs in the bootloader, not in the signer, so the board has to be restarted into it.</p>
-    <p id="serial-support" class="bad" hidden>This browser has no Web Serial. Use Chrome or Edge on a computer.</p>
-    <button id="b-to-boot" class="quiet" disabled>Restart into the bootloader</button>
-    <button id="b-check">Read and check</button>
-    <button id="b-to-signer" class="quiet" disabled>Start the signer again</button>
-    <p class="note gap-top">No signer connected? Put the board in its bootloader by hand: hold PROG, tap RESET, release PROG. Then click "Read and check" and pick the board's serial port.</p>
-    <div class="out" id="c-out"></div>
   </section>
 
   <section id="s-message" disabled>
@@ -59,8 +75,8 @@
   </section>
 
   <section id="s-meter" disabled>
-    <h2>Touch sensor</h2>
-    <p class="note">What the pad reads right now. Untouched it sits near 49; a fingertip pushes it above 54.</p>
+    <h2>5. Touch sensor</h2>
+    <p class="note">What pad PB1 reads right now. Untouched it sits near 49; a fingertip pushes it above 54.</p>
     <button id="b-meter" class="quiet">Start meter</button>
     <span id="meter-val" class="mono"></span>
     <div id="meter"><div></div></div>
@@ -70,6 +86,11 @@
     <h2>Log</h2>
     <pre id="log"></pre>
   </section>
+
+  <footer>
+    <p>Dabao Workbench is a community project by BlocksIndia, open source under Apache 2.0: <a href="https://github.com/BlockIndia-LLC/ethereum-app" rel="noopener">github.com/BlockIndia-LLC/ethereum-app</a>. Found a bootloader version it does not know, or something that breaks? Open an issue there.</p>
+    <p>Not affiliated with or endorsed by Baochip or CrossBar. "Dabao" and "Baochip" are names of their board and chip.</p>
+  </footer>
 </main>
 
 <div id="touch">Touch pad PB1 on the board to approve<small id="touch-left"></small></div>

@@ -36,7 +36,7 @@ jobs:
         run: |
           mkdir -p _site/vendor
           cd dabao-app-eth-burner/tools/web
-          cp index.html app.js style.css "$GITHUB_WORKSPACE/_site/"
+          cp index.html app.js style.css icon.svg card.png "$GITHUB_WORKSPACE/_site/"
           cp vendor/* "$GITHUB_WORKSPACE/_site/vendor/"
           echo "562de2cfc9021c75453b04c75587d20311fb585a6fb4acce5d872d21036170c2  $GITHUB_WORKSPACE/_site/vendor/ethers-6.13.4.min.js" | sha256sum -c -
           touch "$GITHUB_WORKSPACE/_site/.nojekyll"

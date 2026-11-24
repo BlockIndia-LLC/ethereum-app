@@ -47,3 +47,7 @@ table.check td:first-child { width: 26px; font-weight: 700; }
 .gap-top { margin-top: 12px; }
 .lines { white-space: pre-line; }
 .banner { font-size: 15px; }
+.byline { color: var(--accent); font-weight: 600; margin: 0 0 10px; }
+.tag { display: inline-block; font-size: 12px; font-weight: 600; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 9px; margin-left: 6px; vertical-align: middle; }
+footer { color: var(--muted); font-size: 13px; margin-top: 24px; }
+footer p { margin: 0 0 6px; }

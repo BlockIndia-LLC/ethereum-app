@@ -236,13 +236,14 @@ the source. For these images, xous-core's `--no-timestamp` flag and a [baobit](h
 (Guix) build are the way to that, and have not been tried; the boot stages below them were matched, see
 [docs/VERIFICATION.md](docs/VERIFICATION.md).
 
-### Browser page
+### Browser page: Dabao Workbench
 
-`tools/web` is a small wallet page (`index.html`, `app.js`, `style.css`) that talks to the board over
-WebHID, in Chrome or Edge on a computer. Nothing is installed.
+`tools/web` is a small page (`index.html`, `app.js`, `style.css`) that talks to the board over USB
+(WebHID and Web Serial), in Chrome or Edge on a computer. Nothing is installed. It is published as
+**Dabao Workbench**, a community project by BlocksIndia, not affiliated with Baochip or CrossBar.
 
-**Try it: <https://blockindia-llc.github.io/ethereum-app/>** (a board running this signer is needed). That
-copy is published from this folder by `.github/workflows/pages.yml` on every push that changes it; the
+**Try it: <https://blockindia-llc.github.io/ethereum-app/>**. The bootloader check works on any Dabao as
+it comes; the signing parts need a board running this signer. That copy is published from this folder by `.github/workflows/pages.yml` on every push that changes it; the
 files are copied as they are, nothing is built.
 
 * **Connect** shows the signer's version, the board's address and its Sepolia balance.
