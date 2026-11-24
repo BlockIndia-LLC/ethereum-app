@@ -20,71 +20,106 @@
 <link rel="icon" type="image/svg+xml" href="icon.svg">
 <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body data-state="none">
+
+<header class="bar">
+  <div class="bar-in">
+    <span class="brand">Dabao Workbench</span>
+    <span class="by">by BlocksIndia</span>
+    <span class="grow"></span>
+    <span id="st" class="chip st">No board</span>
+    <button id="chip-addr" class="chip mono linkish" title="Copy the address" hidden></button>
+    <span id="i-balance" class="chip" hidden>–</span>
+    <a class="chip warnchip" href="#limits">Test network only · not audited</a>
+    <button id="b-theme" class="chip linkish" title="Switch between dark and light">Light</button>
+  </div>
+</header>
+
 <main>
-  <h1>Dabao Workbench</h1>
-  <p class="byline">by BlocksIndia</p>
-  <p class="lede">Check, test and sign with your Baochip-1x Dabao board, straight from the browser. Nothing is installed: the page talks to the board over USB, in Chrome or Edge on a computer.</p>
-  <p class="warn banner"><b>Test network only. Not audited.</b> This is a tool for developers. With the signer firmware, the key in the board cannot be backed up, the board has no PIN, and it cannot show what it signs. Do not use it for anything of value.</p>
+  <div class="hero">
+    <section id="board-card" class="boardcard">
+      <svg id="board" viewBox="0 0 380 216" role="img" aria-label="Drawing of the Dabao board, seen from above with the USB socket on the left">
+        <rect class="pcb" x="36" y="24" width="328" height="168" rx="6"/>
+        <rect class="usb" x="22" y="72" width="40" height="72" rx="5"/>
+        <rect class="soc" x="164" y="80" width="56" height="56" rx="4" transform="rotate(45 192 108)"/>
+        <text class="silk mid" x="192" y="112">Baochip-1x</text>
+        <circle class="btn" cx="126.4" cy="140" r="9"/><text class="silk mid" x="126.4" y="122">PROG</text>
+        <circle class="btn" cx="338.8" cy="108" r="9"/><text class="silk mid" x="338.8" y="90">RESET</text>
+        <circle class="led" cx="92" cy="60" r="4"/>
+        <g id="pads"></g>
+        <circle id="ring" class="ring" cx="270.5" cy="36.9" r="7"/>
+        <text class="silk mid pb1label" x="270.5" y="62">PB1</text>
+      </svg>
+      <p id="hint" class="hint">Plug in a board, or try the simulated one.</p>
+      <div id="s-meter" class="meterrow" disabled>
+        <button id="b-meter" class="quiet small">Start meter</button>
+        <div id="meter"><div></div></div>
+        <span id="meter-val" class="mono"></span>
+      </div>
+      <p class="note center">Touch reading of pad PB1. Untouched it sits near 49; a fingertip pushes it above 54.</p>
+    </section>
+
+    <section id="s-connect">
+      <h2>Get started</h2>
+      <p id="support" class="bad" hidden>This browser has no WebHID. Use Chrome or Edge on a computer. You can still try the simulated board.</p>
+      <p class="note">With the <a href="https://github.com/BlockIndia-LLC/ethereum-app/tree/touch-confirm/dabao-app-eth-burner" rel="noopener">signer firmware</a> on your board: plug it in, click Connect and pick "Dabao HID". The page finds the board by itself next time.</p>
+      <button id="b-connect">Connect board</button>
+      <button id="b-sim" class="quiet">Try without a board</button>
+      <p class="note gap-top">A stock board, without our firmware? Go to <a href="#s-check">Check your board</a>.</p>
+      <dl id="info" class="gap-top" hidden>
+        <dt>Signer version</dt><dd id="i-version">–</dd>
+        <dt>Address</dt><dd><span id="i-address" class="mono">–</span></dd>
+        <dt>Key store</dt><dd id="i-keystore" class="lines">–</dd>
+        <dt>Explorer</dt><dd id="i-explorer">–</dd>
+      </dl>
+    </section>
+  </div>
+
+  <div class="two">
+    <section id="s-message" disabled>
+      <h2>Sign a message</h2>
+      <label for="m-text">Message</label>
+      <input type="text" id="m-text" value="Hello from a Dabao">
+      <button id="b-sign-msg">Sign on the board</button>
+      <div class="out" id="m-out"></div>
+    </section>
+
+    <section id="s-tx" disabled>
+      <h2>Send a test transaction</h2>
+      <label for="t-to">To</label>
+      <input type="text" id="t-to" class="mono" placeholder="0x…">
+      <label for="t-amount">Amount (Sepolia ETH)</label>
+      <input type="text" id="t-amount" value="0.0001">
+      <button id="b-sign-tx">Sign on the board</button>
+      <button id="b-broadcast" class="quiet" disabled>Broadcast to Sepolia</button>
+      <div class="out" id="t-out"></div>
+      <p class="note gap-top">The board has no screen and cannot show what it signs. A compromised computer could ask for something else.</p>
+    </section>
+  </div>
+
+  <div id="receipts"></div>
 
   <section id="s-check">
-    <h2>1. Check your board <span class="tag">any Dabao</span></h2>
+    <h2>Check your board <span class="tag">any Dabao</span></h2>
     <p class="note">The first code the chip runs is its bootloader. This reads the fingerprints (SHA-512) the bootloader reports for its two stages and compares them with builds that were rebuilt from the public source. It works on a board as it comes, with no firmware of ours.</p>
     <p class="note">Put the board in its bootloader: hold PROG, tap RESET, release PROG (a drive named BAOCHIP shows up). Then click "Read and check" and pick the board's serial port.</p>
     <p id="serial-support" class="bad" hidden>This browser has no Web Serial. Use Chrome or Edge on a computer.</p>
     <button id="b-check">Read and check</button>
     <button id="b-to-boot" class="quiet" disabled>Restart into the bootloader</button>
     <button id="b-to-signer" class="quiet" disabled>Start the signer again</button>
-    <p class="note gap-top">The two quieter buttons are for a board running the signer firmware (section 2): they move it into the bootloader and back without touching the board.</p>
+    <p class="note gap-top">The two quieter buttons are for a board running the signer firmware: they move it into the bootloader and back without touching the board.</p>
     <div class="out" id="c-out"></div>
   </section>
 
-  <section id="s-connect">
-    <h2>2. Connect the signer <span class="tag">needs the signer firmware</span></h2>
-    <p id="support" class="bad" hidden>This browser has no WebHID. Use Chrome or Edge on a computer.</p>
-    <p class="note">The rest of this page talks to the touch-to-confirm Ethereum signer, open firmware you can build and flash yourself: <a href="https://github.com/BlockIndia-LLC/ethereum-app/tree/touch-confirm/dabao-app-eth-burner" rel="noopener">source and build steps</a>.</p>
-    <p class="note">Plug the board in and start the signer (press PROG if it is waiting in its bootloader). Then pick "Dabao HID" in the dialog. Keep this page open in one tab only.</p>
-    <button id="b-connect">Connect</button>
-    <dl id="info" class="gap-top" hidden>
-      <dt>Signer version</dt><dd id="i-version">–</dd>
-      <dt>Address</dt><dd><span id="i-address" class="mono">–</span></dd>
-      <dt>Key store</dt><dd id="i-keystore" class="lines">–</dd>
-      <dt>Sepolia balance</dt><dd id="i-balance">–</dd>
-      <dt>Explorer</dt><dd id="i-explorer">–</dd>
-    </dl>
-  </section>
-
-  <section id="s-message" disabled>
-    <h2>3. Sign a message</h2>
-    <label for="m-text">Message</label>
-    <input type="text" id="m-text" value="Hello from a Dabao">
-    <button id="b-sign-msg">Sign on the board</button>
-    <div class="out" id="m-out"></div>
-  </section>
-
-  <section id="s-tx" disabled>
-    <h2>4. Send a test transaction</h2>
-    <p class="warn"><b>Sepolia test network only.</b> This page shows what it asks the board to sign, but the board has no screen and cannot show it. A compromised computer could ask for something else. Never use this key for real funds.</p>
-    <label for="t-to">To</label>
-    <input type="text" id="t-to" class="mono" placeholder="0x…">
-    <label for="t-amount">Amount (Sepolia ETH)</label>
-    <input type="text" id="t-amount" value="0.0001">
-    <button id="b-sign-tx">Sign on the board</button>
-    <button id="b-broadcast" class="quiet" disabled>Broadcast to Sepolia</button>
-    <div class="out" id="t-out"></div>
-  </section>
-
-  <section id="s-meter" disabled>
-    <h2>5. Touch sensor</h2>
-    <p class="note">What pad PB1 reads right now. Untouched it sits near 49; a fingertip pushes it above 54.</p>
-    <button id="b-meter" class="quiet">Start meter</button>
-    <span id="meter-val" class="mono"></span>
-    <div id="meter"><div></div></div>
-  </section>
-
-  <section>
-    <h2>Log</h2>
+  <details class="fold">
+    <summary>Log</summary>
     <pre id="log"></pre>
+  </details>
+
+  <section id="limits" class="limits">
+    <h2>Know the limits</h2>
+    <p><b>Test network only. Not audited.</b> This is a tool for developers. With the signer firmware, the key in the board cannot be backed up, the board has no PIN, and it cannot show what it signs. Do not use it for anything of value.</p>
+    <p class="note">The drawing of the board is a guide to where things are, not an exact picture.</p>
   </section>
 
   <footer>
@@ -92,8 +127,6 @@
     <p>Not affiliated with or endorsed by Baochip or CrossBar. "Dabao" and "Baochip" are names of their board and chip.</p>
   </footer>
 </main>
-
-<div id="touch">Touch pad PB1 on the board to approve<small id="touch-left"></small></div>
 
 <script type="module" src="app.js"></script>
 </body>

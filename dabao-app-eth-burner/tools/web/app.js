@@ -1,4 +1,4 @@
-import { Transaction, Signature, JsonRpcProvider, verifyMessage, parseEther, formatEther, getAddress, hexlify, getBytes, toUtf8Bytes }
+import { Transaction, Signature, JsonRpcProvider, Wallet, verifyMessage, hashMessage, keccak256, concat, parseEther, formatEther, getAddress, hexlify, getBytes, toUtf8Bytes }
   from "./vendor/ethers-6.13.4.min.js";
 
 // ---------------------------------------------------------------- constants
@@ -237,32 +237,136 @@ async function withBootloader(fn) {
   } finally { await port.close().catch(() => {}); }
 }
 
+// ---------------------------------------------------------------- a simulated board
+// For visitors without hardware. It answers like the signer does, with a throw-away key that lives
+// only in this page. The "touch" is a click on pad PB1 in the drawing.
+class SimBoard {
+  constructor() { this.sim = true; this.wallet = Wallet.createRandom(); this.touch = null; this.pressed = false; }
+  async ask(body) {
+    const [m] = cborDecode(body, 1);
+    const reply = (...pairs) => ({ type: TYPE_CUSTOM, map: new Map([[1, 0], ...pairs]) });
+    switch (m.get(1)) {
+      case 1: return reply([3, this.wallet.address]);
+      case 2: return reply([5, "simulated"]);
+      case 3: await new Promise(r => setTimeout(r, 150)); return reply([6, this.pressed ? "118 131" : "49 50"]);
+      case 5: return reply([6, "simulated: there is no key store.\nThe key lives in this page and is thrown away when you leave."]);
+      default: { const e = new Error("unsupported"); e.code = 3; throw e; }
+    }
+  }
+  async sign(signData, dataType) {
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => { this.touch = null; const e = new Error("not approved"); e.code = 1; reject(e); }, APPROVE_SECONDS * 1000);
+      this.touch = () => { clearTimeout(t); resolve(); };
+    });
+    const digest = dataType === 3 ? hashMessage(signData) : keccak256(signData);
+    const s = this.wallet.signingKey.sign(digest);
+    return getBytes(concat([s.r, s.s, new Uint8Array([s.yParity])]));
+  }
+}
+
 // ---------------------------------------------------------------- page
 const $ = id => document.getElementById(id);
 const log = s => { $("log").textContent += `[${new Date().toLocaleTimeString()}] ${s}\n`; $("log").scrollTop = 1e9; };
 const provider = new JsonRpcProvider(RPC, Number(CHAIN_ID), { staticNetwork: true });
-let board = null, address = null, signedTx = null, metering = false;
+let board = null, address = null, signedTx = null, txReceipt = null, metering = false, meterLoop = null, haveLock = false;
 
 function setOut(id, html) { $(id).innerHTML = html; }
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const shorten = (s, n = 6) => s.length > 2 * n + 3 ? `${s.slice(0, n + 2)}…${s.slice(-n)}` : s;
+
+// The state drives the status chip and the drawing: none, ready, sim, touch.
+function setState(state, text, hint) {
+  document.body.dataset.state = state;
+  $("st").textContent = text;
+  if (hint !== undefined) $("hint").textContent = hint;
+}
+const idleState = () => board
+  ? setState(board.sim ? "sim" : "ready", board.sim ? "Simulated board" : `Signer ${$("i-version").textContent}`, board.sim ? "Simulated board ready. Nothing here is really on a chip." : "Board ready.")
+  : setState("none", "No board", "Plug in a board, or try the simulated one.");
 
 function enable(on) {
   for (const id of ["s-message", "s-tx", "s-meter"]) on ? $(id).removeAttribute("disabled") : $(id).setAttribute("disabled", "");
-  $("info").hidden = !on;
-  $("b-to-boot").disabled = !on;
+  $("info").hidden = !on; $("chip-addr").hidden = !on; $("i-balance").hidden = !on;
+  $("b-to-boot").disabled = !on || !!board?.sim;
+  document.body.classList.toggle("sim", !!board?.sim);
+  idleState();
 }
 
+// The drawing: 16 pads a side, as on the board (pin 40 and pin 1 are next to the USB socket).
+function drawPads() {
+  const top = "VBUS VSYS GND ON 3V3 PB5 PB4 GND PB3 PB2 RUN PB1 GND PB11 PB12 GND".split(" ");
+  const bottom = "PC13 PC12 GND PC11 PC10 PC9 PC8 GND PC7 PC3 PC2 PC1 GND PC0 PB14 PB13".split(" ");
+  const pad = (name, pin, i, y) => {
+    const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    c.setAttribute("cx", (36 + (1.37 + 2.54 * i) * 8).toFixed(1)); c.setAttribute("cy", y); c.setAttribute("r", name === "PB1" ? 7 : 5);
+    c.setAttribute("class", `pad${name === "GND" ? " gnd" : ""}${name === "PB1" ? " pb1" : ""}`);
+    if (name === "PB1") c.id = "pad-pb1";
+    const t = document.createElementNS("http://www.w3.org/2000/svg", "title");
+    t.textContent = `${name} (pin ${pin})`; c.append(t);
+    $("pads").append(c);
+  };
+  top.forEach((n, i) => pad(n, 40 - i, i, 36.9));
+  bottom.forEach((n, i) => pad(n, 1 + i, i, 179.1));
+  const pb1 = $("pad-pb1");
+  pb1.addEventListener("pointerdown", () => { if (board?.sim) { board.pressed = true; board.touch?.(); } });
+  for (const ev of ["pointerup", "pointerleave"]) pb1.addEventListener(ev, () => { if (board?.sim) board.pressed = false; });
+}
+
+// A receipt: one card per signature, newest first. Values are set as text, never as HTML.
+function addReceipt(title, good, rows) {
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+  const card = el("div", `receipt${good ? "" : " bad-r"}`);
+  const head = el("div", "receipt-head");
+  head.append(el("span", "title", title),
+    el("span", good ? "ok" : "bad", good ? "✓ Verified against the board's address" : "✗ The signer is not this board"),
+    el("span", "when", `${board?.sim ? "simulated · " : ""}${new Date().toLocaleTimeString()}`));
+  const grid = el("div", "rows");
+  for (const [k, v, mono] of rows) {
+    const copy = el("button", "quiet small", "Copy");
+    copy.onclick = () => navigator.clipboard.writeText(v).then(() => { copy.textContent = "Copied"; setTimeout(() => copy.textContent = "Copy", 1200); }).catch(() => {});
+    const val = el("span", `v${mono ? " mono" : ""}`, v); val.title = v;
+    grid.append(el("span", "k", k), val, mono ? copy : el("span"));
+  }
+  const stages = el("div", "stages");
+  card.append(head, grid, stages);
+  $("receipts").prepend(card);
+  return {
+    stage(name, cls = "done", link) {
+      let s = [...stages.children].find(x => x.dataset.name === name);
+      if (!s) { s = el("span", "stage"); s.dataset.name = name; stages.append(s); }
+      s.className = `stage ${cls}`; s.textContent = name;
+      if (link) { const a = el("a", "", "view"); a.href = link; a.target = "_blank"; a.rel = "noopener"; s.append(" · ", a); }
+    },
+  };
+}
+
+async function stopMeter() { metering = false; if (meterLoop) await meterLoop.catch(() => {}); }
+
 async function withTouch(fn) {
+  await stopMeter();
   const end = Date.now() + APPROVE_SECONDS * 1000;
-  const tick = () => { $("touch-left").textContent = `${Math.max(0, Math.ceil((end - Date.now()) / 1000))} seconds left. Keep your finger off until now, then touch and hold for a second.`; };
-  tick(); $("touch").classList.add("on");
+  const where = board?.sim ? "Click pad PB1 in the drawing to approve" : "Touch pad PB1 on the board to approve";
+  const tick = () => { const left = Math.max(0, Math.ceil((end - Date.now()) / 1000)); setState("touch", `Waiting for touch · ${left} s`, `${where} (${left} s)`); };
+  tick();
+  $("board-card").scrollIntoView({ block: "nearest", behavior: "smooth" });
   const timer = setInterval(tick, 250);
-  try { return await fn(); } finally { clearInterval(timer); $("touch").classList.remove("on"); }
+  try { return await fn(); } finally { clearInterval(timer); idleState(); }
 }
 
 async function refreshBalance() {
-  try { $("i-balance").textContent = formatEther(await provider.getBalance(address)) + " ETH"; }
-  catch (e) { $("i-balance").textContent = "couldn't reach the Sepolia node"; }
+  if (board?.sim) { $("i-balance").textContent = "simulated"; return; }
+  try { $("i-balance").textContent = Number(formatEther(await provider.getBalance(address))).toFixed(4) + " Sepolia ETH"; }
+  catch (e) { $("i-balance").textContent = "balance unavailable"; }
+}
+
+// Two tabs talking to one board mix up each other's messages, so only one tab of this page may hold it.
+function claim() {
+  if (haveLock || !navigator.locks) return Promise.resolve(true);
+  return new Promise(resolve => navigator.locks.request("dabao-board", { ifAvailable: true }, lock => {
+    if (!lock) { resolve(false); return; }
+    haveLock = true; resolve(true);
+    return new Promise(() => {});                 // held until this tab closes
+  }));
 }
 
 async function connect() {
@@ -270,7 +374,7 @@ async function connect() {
   if (device) await attach(device);
 }
 
-// After the signer restarts, a board the user already allowed is picked up again without a dialog.
+// A board the user already allowed is picked up again without a dialog: on load, on plug-in, after a restart.
 async function reattach() {
   if (board) return;
   const device = (await navigator.hid.getDevices()).find(d => d.vendorId === VID && d.productId === PID);
@@ -278,25 +382,44 @@ async function reattach() {
 }
 
 async function attach(device) {
-  if (!device.opened) await device.open();
-  board = new Board(device);
-  log(`connected to "${device.productName}"`);
-  const version = (await board.ask(customRequest(2))).map.get(5);
-  const info = (await board.ask(customRequest(1, true))).map;
-  address = getAddress(info.get(3));
-  $("i-version").textContent = version;
-  $("i-address").textContent = address;
-  $("i-explorer").innerHTML = `<a href="${EXPLORER}/address/${address}" target="_blank" rel="noopener">${EXPLORER.replace("https://", "")}/address/…</a>`;
-  // Which of the signer's two processes can reach the keystore (0.5.0 and later).
-  try { $("i-keystore").textContent = (await board.ask(customRequest(5))).map.get(6) ?? "–"; }
-  catch (e) { $("i-keystore").textContent = "not reported by this signer version"; }
-  if (!$("t-to").value) $("t-to").value = address;
+  if (device && !(await claim())) {
+    setState("none", "In use in another tab", "This page is open in another tab that holds the board. Close one of them.");
+    log("another tab of this page holds the board");
+    return;
+  }
+  if (device && !device.opened) await device.open();
+  board = device ? new Board(device) : new SimBoard();
+  log(device ? `connected to "${device.productName}"` : "started a simulated board");
+  try {
+    const version = (await board.ask(customRequest(2))).map.get(5);
+    const info = (await board.ask(customRequest(1, true))).map;
+    address = getAddress(info.get(3));
+    $("i-version").textContent = version;
+    $("i-address").textContent = address;
+    $("chip-addr").textContent = shorten(address, 4);
+    $("i-explorer").innerHTML = `<a href="${EXPLORER}/address/${address}" target="_blank" rel="noopener">${EXPLORER.replace("https://", "")}/address/…</a>`;
+    // Which of the signer's two processes can reach the keystore (0.5.0 and later).
+    try { $("i-keystore").textContent = (await board.ask(customRequest(5))).map.get(6) ?? "–"; }
+    catch (e) { $("i-keystore").textContent = "not reported by this signer version"; }
+    $("t-to").value = address;
+    log(`signer ${version}, address ${address}`);
+  } catch (e) {
+    board = null;
+    setState("none", "Board not answering", "The board did not answer. Press RESET on it, then click Connect.");
+    throw e;
+  }
   enable(true);
-  log(`signer ${version}, address ${address}`);
   refreshBalance();
 }
 
+function simulate() {
+  if (board && !board.sim) { log("a real board is connected: unplug it to try the simulated one"); return; }
+  board = null;
+  return attach(null);
+}
+
 async function toBootloader() {
+  await stopMeter();
   setOut("c-out", "Asking the signer to restart…");
   await board.ask(customRequest(4), 4000);
   log("the signer is restarting into the bootloader");
@@ -316,13 +439,13 @@ async function checkBoard() {
   const audit = parseAudit(text), result = checkAudit(audit);
   const mark = { ok: ["✓", "ok"], bad: ["✗", "bad"], info: ["·", "note"] };
   const verdicts = {
-    match: `<span class="verdict ok">The bootloader matches the published source.</span>\nBoth stages equal build ${esc(result.build?.version)}, ${esc(result.build?.evidence)}.`,
-    mismatch: `<span class="verdict bad">The bootloader does NOT match the rebuilt images.</span>\nDon't trust this board with a key until you know why.`,
+    match: `<span class="verdict ok">✓ The bootloader matches the published source.</span>\nBoth stages equal build ${esc(result.build?.version)}, ${esc(result.build?.evidence)}.`,
+    mismatch: `<span class="verdict bad">✗ The bootloader does NOT match the rebuilt images.</span>\nDon't trust this board with a key until you know why.`,
     unknown: `<span class="verdict">This bootloader version isn't in this page's list.</span>\nThat is not a failure: nobody has recorded a rebuild of it here yet. The verification record explains how to rebuild and compare.`,
     unreadable: `<span class="verdict bad">The answer could not be understood.</span>`,
   };
   setOut("c-out", `${verdicts[result.verdict]}\n` +
-    `<table class="check">${result.rows.map(r => `<tr><td class="${mark[r.status][1]}">${mark[r.status][0]}</td><td>${esc(r.what)}</td><td class="mono">${esc(r.detail)}</td></tr>`).join("")}</table>` +
+    `<details><summary class="note">Show every check</summary><table class="check">${result.rows.map(r => `<tr><td class="${mark[r.status][1]}">${mark[r.status][0]}</td><td>${esc(r.what)}</td><td class="mono">${esc(r.detail)}</td></tr>`).join("")}</table></details>` +
     `<span class="note">What this can't show: the fingerprints are reported by the chip itself, so a dishonest factory step would not be caught. ` +
     `<a href="${VERIFICATION_RECORD}" target="_blank" rel="noopener">How the rebuild was done, and its limits</a>.</span>`);
   log(`bootloader check: ${result.verdict}${audit.version ? " (" + audit.version + ")" : ""}`);
@@ -345,8 +468,8 @@ async function signMessage() {
     const sig = await withTouch(() => board.sign(toUtf8Bytes(text), 3));
     const signer = verifyMessage(text, hexlify(sig));
     const good = signer === address;
-    setOut("m-out", `<span class="${good ? "ok" : "bad"}">${good ? "Signed, and the signature checks out." : "Signed, but the signer is not this board!"}</span>\n` +
-      `Recovered signer: <span class="mono">${esc(signer)}</span>\nSignature: <span class="mono">${esc(hexlify(sig))}</span>`);
+    setOut("m-out", "");
+    addReceipt("Message signed", good, [["Message", text], ["Signed by", signer, true], ["Signature", hexlify(sig), true]]);
     log(`message signed; recovered signer ${signer}`);
   } catch (e) {
     setOut("m-out", `<span class="bad">Not signed.</span> ${esc(e.message)}`);
@@ -355,7 +478,7 @@ async function signMessage() {
 }
 
 async function signTx() {
-  signedTx = null; $("b-broadcast").disabled = true;
+  signedTx = null; txReceipt = null; $("b-broadcast").disabled = true;
   try {
     const to = getAddress($("t-to").value.trim());
     const value = parseEther($("t-amount").value.trim());
@@ -370,10 +493,17 @@ async function signTx() {
     const sig = await withTouch(() => board.sign(getBytes(tx.unsignedSerialized), 4, CHAIN_ID));
     tx.signature = Signature.from({ r: hexlify(sig.slice(0, 32)), s: hexlify(sig.slice(32, 64)), yParity: sig[64] });
     const good = tx.from === address;
-    if (good) { signedTx = tx; $("b-broadcast").disabled = false; }
-    setOut("t-out", `<span class="${good ? "ok" : "bad"}">${good ? "Signed, and the signature checks out." : "Signed, but the signer is not this board!"}</span>\n` +
-      `Recovered sender: <span class="mono">${esc(tx.from)}</span>\nTransaction hash: <span class="mono">${esc(tx.hash)}</span>\n` +
-      `Raw transaction: <span class="mono">${esc(tx.serialized)}</span>\n${good ? "Nothing has been sent yet. Broadcast it to put it on Sepolia." : ""}`);
+    txReceipt = addReceipt(`Transaction signed: ${formatEther(value)} Sepolia ETH`, good,
+      [["To", to, true], ["Signed by", tx.from, true], ["Hash", tx.hash, true], ["Raw transaction", tx.serialized, true]]);
+    txReceipt.stage("Signed");
+    if (good && board.sim) {
+      txReceipt.stage("Not broadcast: simulated", "");
+      setOut("t-out", "Signed by the simulated board. It is not sent anywhere: the key is a throw-away with no funds.");
+    } else if (good) {
+      signedTx = tx; $("b-broadcast").disabled = false;
+      txReceipt.stage("Broadcast", ""); txReceipt.stage("Confirmed", "");
+      setOut("t-out", "Signed. Nothing has been sent yet: broadcast it to put it on Sepolia.");
+    } else setOut("t-out", `<span class="bad">Signed, but the signer is not this board!</span>`);
     log(`transaction signed; hash ${tx.hash}`);
   } catch (e) {
     setOut("t-out", `<span class="bad">Not signed.</span> ${esc(e.shortMessage ?? e.message)}`);
@@ -384,58 +514,85 @@ async function signTx() {
 async function broadcast() {
   if (!signedTx) return;
   $("b-broadcast").disabled = true;
+  const receipt = txReceipt;
   try {
     const sent = await provider.broadcastTransaction(signedTx.serialized);
-    $("t-out").innerHTML += `\n<span class="ok">Broadcast.</span> <a href="${EXPLORER}/tx/${sent.hash}" target="_blank" rel="noopener">View it on Sepolia Etherscan</a> (it can take half a minute to appear).`;
+    receipt?.stage("Broadcast", "done", `${EXPLORER}/tx/${sent.hash}`);
+    setOut("t-out", `<span class="ok">Broadcast.</span> <a href="${EXPLORER}/tx/${sent.hash}" target="_blank" rel="noopener">View it on Sepolia Etherscan</a> (it can take half a minute to appear).`);
     log(`broadcast ${sent.hash}`);
     signedTx = null;
-    setTimeout(refreshBalance, 20000);
+    provider.waitForTransaction(sent.hash, 1, 180000).then(r => {
+      receipt?.stage("Confirmed", r && r.status === 1 ? "done" : "fail");
+      log(r ? `confirmed in block ${r.blockNumber}` : "not confirmed within three minutes");
+      refreshBalance();
+    }).catch(e => log(`waiting for confirmation: ${e.shortMessage ?? e.message}`));
   } catch (e) {
-    $("t-out").innerHTML += `\n<span class="bad">Broadcast failed.</span> ${esc(e.shortMessage ?? e.message)}`;
+    receipt?.stage("Broadcast", "fail");
+    setOut("t-out", `<span class="bad">Broadcast failed.</span> ${esc(e.shortMessage ?? e.message)}`);
     log(`broadcast failed: ${e.message}`);
     $("b-broadcast").disabled = false;
   }
 }
 
-async function meter() {
-  metering = !metering;
-  $("b-meter").textContent = metering ? "Stop meter" : "Start meter";
-  while (metering && board) {
-    try {
-      const text = (await board.ask(customRequest(3), 3000)).map.get(6) ?? "";
-      const m = text.match(/(\d+) (\d+)\s*$/);
-      if (!m) { $("meter-val").textContent = text; break; }
-      const hi = Number(m[2]);
-      $("meter-val").textContent = `${m[1]} … ${m[2]}${hi > 54 ? "  touch" : ""}`;
-      document.querySelector("#meter > div").style.width = Math.min(100, Math.max(0, (hi - 45) / 1.6)) + "%";
-    } catch (e) { log(`meter: ${e.message}`); break; }
-  }
-  metering = false; $("b-meter").textContent = "Start meter";
+function meter() {
+  if (metering) { metering = false; return; }
+  metering = true;
+  $("b-meter").textContent = "Stop meter";
+  meterLoop = (async () => {
+    while (metering && board) {
+      try {
+        const text = (await board.ask(customRequest(3), 3000)).map.get(6) ?? "";
+        const m = text.match(/(\d+) (\d+)\s*$/);
+        if (!m) { $("meter-val").textContent = text; break; }
+        const hi = Number(m[2]);
+        $("meter-val").textContent = `${m[1]} … ${m[2]}${hi > 54 ? "  touch" : ""}`;
+        document.querySelector("#meter > div").style.width = Math.min(100, Math.max(0, (hi - 45) / 1.6)) + "%";
+      } catch (e) { log(`meter: ${e.message}`); break; }
+    }
+    metering = false; $("b-meter").textContent = "Start meter";
+  })();
 }
 
 function guard(fn) {
   return async () => { try { await fn(); } catch (e) { log(`error: ${e.message}`); } };
 }
 
+function theme(set) {
+  let t = set;
+  try { t ??= localStorage.getItem("theme"); if (set) localStorage.setItem("theme", set); } catch (e) { /* private window */ }
+  t = t === "light" ? "light" : "dark";
+  document.documentElement.dataset.theme = t;
+  $("b-theme").textContent = t === "light" ? "Dark" : "Light";
+}
+
+drawPads();
+theme();
+$("b-theme").onclick = () => theme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
+$("chip-addr").onclick = () => navigator.clipboard.writeText(address).then(() => {
+  $("chip-addr").textContent = "Copied"; setTimeout(() => $("chip-addr").textContent = shorten(address, 4), 1200);
+}).catch(() => {});
+$("b-sim").onclick = guard(simulate);
+$("b-sign-msg").onclick = guard(signMessage);
+$("b-sign-tx").onclick = guard(signTx);
+$("b-broadcast").onclick = guard(broadcast);
+$("b-meter").onclick = guard(meter);
+
 if (!("hid" in navigator)) {
   $("support").hidden = false; $("b-connect").disabled = true;
 } else {
   $("b-connect").onclick = guard(connect);
-  $("b-sign-msg").onclick = guard(signMessage);
-  $("b-sign-tx").onclick = guard(signTx);
-  $("b-broadcast").onclick = guard(broadcast);
-  $("b-meter").onclick = guard(meter);
   $("b-to-boot").onclick = guard(toBootloader);
   navigator.hid.addEventListener("connect", () => reattach().catch(() => {}));
-  if ("serial" in navigator) {
-    $("b-check").onclick = guard(checkBoard);
-    $("b-to-signer").onclick = guard(toSigner);
-  } else {
-    $("serial-support").hidden = false; $("b-check").disabled = true;
-  }
   navigator.hid.addEventListener("disconnect", e => {
     if (board && e.device === board.device) { board = null; metering = false; enable(false); log("the board was disconnected"); }
   });
+  reattach().catch(e => log(`reconnect: ${e.message}`));
+}
+if ("serial" in navigator) {
+  $("b-check").onclick = guard(checkBoard);
+  $("b-to-signer").onclick = guard(toSigner);
+} else {
+  $("serial-support").hidden = false; $("b-check").disabled = true;
 }
 
 // Known-answer checks, with a request, a reply and a transaction captured from a real board.
